@@ -1,0 +1,1 @@
+"""DentalVoice AI backend package."""
