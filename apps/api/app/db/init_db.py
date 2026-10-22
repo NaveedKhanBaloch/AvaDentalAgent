@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.models.models import Appointment, Clinic, DentalService, Membership, Patient, Provider, Tenant, User
+from app.models.models import Appointment, Clinic, ClinicBusinessHours, DentalService, Membership, Patient, Provider, Tenant, User
 
 settings = get_settings()
 
@@ -62,6 +62,17 @@ def seed_demo_data() -> None:
                 DentalService(tenant_id=tenant.id, clinic_id=clinic.id, name="New Patient Exam", default_duration_minutes=45, indicative_price=185.00),
                 DentalService(tenant_id=tenant.id, clinic_id=clinic.id, name="Dental Cleaning", default_duration_minutes=30, indicative_price=120.00),
                 DentalService(tenant_id=tenant.id, clinic_id=clinic.id, name="Teeth Whitening", default_duration_minutes=60, indicative_price=420.00),
+            ])
+
+        if db.query(ClinicBusinessHours).filter(ClinicBusinessHours.clinic_id == clinic.id).count() == 0:
+            db.add_all([
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=0, opening_time="08:00", closing_time="17:00", is_closed=False),
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=1, opening_time="08:00", closing_time="17:00", is_closed=False),
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=2, opening_time="08:00", closing_time="17:00", is_closed=False),
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=3, opening_time="08:00", closing_time="17:00", is_closed=False),
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=4, opening_time="08:00", closing_time="17:00", is_closed=False),
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=5, opening_time="09:00", closing_time="13:00", is_closed=False),
+                ClinicBusinessHours(clinic_id=clinic.id, weekday=6, opening_time="00:00", closing_time="00:00", is_closed=True),
             ])
 
         if db.query(Patient).filter(Patient.clinic_id == clinic.id).count() == 0:

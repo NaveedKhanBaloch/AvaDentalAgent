@@ -32,6 +32,21 @@ type AppointmentRow = {
   start_time: string;
 };
 
+type ProviderRow = {
+  id: string;
+  name: string;
+  title?: string | null;
+  specialty?: string | null;
+};
+
+type ServiceRow = {
+  id: string;
+  name: string;
+  description?: string | null;
+  default_duration_minutes: number;
+  indicative_price: number;
+};
+
 const defaultForm = {
   first_name: '',
   last_name: '',
@@ -55,15 +70,19 @@ export default function DashboardPage() {
   const [analytics, setAnalytics] = useState({ appointment_trends: [0, 0, 0, 0, 0, 0, 0], call_outcomes: { booked: 0, missed: 0, follow_up: 0 } });
   const [patients, setPatients] = useState<PatientRow[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [services, setServices] = useState<ServiceRow[]>([]);
   const [form, setForm] = useState(defaultForm);
   const [status, setStatus] = useState('');
 
   async function loadDashboard() {
-    const [summaryRes, analyticsRes, patientsRes, appointmentsRes] = await Promise.all([
+    const [summaryRes, analyticsRes, patientsRes, appointmentsRes, providersRes, servicesRes] = await Promise.all([
       fetch(`${API_URL}/api/v1/dashboard/summary`),
       fetch(`${API_URL}/api/v1/dashboard/analytics`),
       fetch(`${API_URL}/api/v1/patients`),
       fetch(`${API_URL}/api/v1/appointments`),
+      fetch(`${API_URL}/api/v1/providers`),
+      fetch(`${API_URL}/api/v1/services`),
     ]);
 
     if (summaryRes.ok) setSummary(await summaryRes.json());
@@ -75,6 +94,14 @@ export default function DashboardPage() {
     if (appointmentsRes.ok) {
       const appointmentData = await appointmentsRes.json();
       setAppointments(appointmentData.items ?? []);
+    }
+    if (providersRes.ok) {
+      const providerData = await providersRes.json();
+      setProviders(providerData.items ?? []);
+    }
+    if (servicesRes.ok) {
+      const serviceData = await servicesRes.json();
+      setServices(serviceData.items ?? []);
     }
   }
 
@@ -176,12 +203,41 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-            <h2 className="mb-4 text-xl font-semibold">Recent patients</h2>
+            <h2 className="mb-4 text-xl font-semibold">Care team</h2>
             <div className="space-y-3">
-              {patients.map((patient) => (
-                <div key={patient.id} className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
-                  <div className="font-semibold text-slate-900">{patient.first_name} {patient.last_name}</div>
-                  <div>{patient.phone ?? patient.email ?? 'No contact info'}</div>
+              {providers.map((provider) => (
+                <div key={provider.id} className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                  <div className="font-semibold text-slate-900">{provider.name}</div>
+                  <div>{provider.title ?? 'Provider'} · {provider.specialty ?? 'General care'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-8 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <h2 className="mb-4 text-xl font-semibold">Upcoming appointments</h2>
+            <div className="space-y-3">
+              {appointments.map((appointment) => (
+                <div key={appointment.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                  <span>{new Date(appointment.start_time).toLocaleString()}</span>
+                  <span className="rounded-full bg-brand-50 px-2 py-1 text-xs font-medium text-brand-600">{appointment.status}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <h2 className="mb-4 text-xl font-semibold">Service menu</h2>
+            <div className="space-y-3">
+              {services.map((service) => (
+                <div key={service.id} className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-900">{service.name}</span>
+                    <span>{service.default_duration_minutes} min</span>
+                  </div>
+                  <div className="mt-1">${service.indicative_price.toFixed(2)}</div>
                 </div>
               ))}
             </div>
@@ -189,16 +245,17 @@ export default function DashboardPage() {
         </section>
 
         <section className="mt-8 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-          <h2 className="mb-4 text-xl font-semibold">Upcoming appointments</h2>
+          <h2 className="mb-4 text-xl font-semibold">Recent patients</h2>
           <div className="space-y-3">
-            {appointments.map((appointment) => (
-              <div key={appointment.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
-                <span>{new Date(appointment.start_time).toLocaleString()}</span>
-                <span className="rounded-full bg-brand-50 px-2 py-1 text-xs font-medium text-brand-600">{appointment.status}</span>
+            {patients.map((patient) => (
+              <div key={patient.id} className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                <div className="font-semibold text-slate-900">{patient.first_name} {patient.last_name}</div>
+                <div>{patient.phone ?? patient.email ?? 'No contact info'}</div>
               </div>
             ))}
           </div>
         </section>
+
       </div>
     </main>
   );
