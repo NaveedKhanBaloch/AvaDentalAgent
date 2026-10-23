@@ -346,6 +346,50 @@ def test_retell_webhook_creates_booking() -> None:
     assert body["appointment_id"]
 
 
+def test_retell_voice_agent_function_aliases_work() -> None:
+    provider = client.get("/api/v1/providers").json()["items"][0]
+    service = client.get("/api/v1/services").json()["items"][0]
+    patient = client.get("/api/v1/patients").json()["items"][0]
+
+    availability = client.post(
+        "/api/v1/integrations/retell/functions/check_availability",
+        json={"provider_id": provider["id"], "service_id": service["id"], "date": "2026-11-22"},
+    )
+    assert availability.status_code == 200, availability.text
+    assert availability.json()["success"] is True
+
+    booking = client.post(
+        "/api/v1/integrations/retell/functions/book_appointment",
+        json={
+            "patient_id": patient["id"],
+            "provider_id": provider["id"],
+            "service_id": service["id"],
+            "start_time": "2026-11-22T09:00:00+00:00",
+            "notes": "Booked by Retell agent.",
+        },
+    )
+    assert booking.status_code == 200, booking.text
+    assert booking.json()["status"] in {"scheduled", "confirmed"}
+
+    lookup = client.post(
+        "/api/v1/integrations/retell/functions/lookup_patient",
+        json={"phone": patient["phone"]},
+    )
+    assert lookup.status_code == 200, lookup.text
+    assert lookup.json()["success"] is True
+
+    clinic = client.post("/api/v1/integrations/retell/functions/get_clinic_information", json={})
+    assert clinic.status_code == 200, clinic.text
+    assert clinic.json()["success"] is True
+
+    treatment = client.post(
+        "/api/v1/integrations/retell/functions/get_treatment_information",
+        json={"service_id": service["id"]},
+    )
+    assert treatment.status_code == 200, treatment.text
+    assert treatment.json()["success"] is True
+
+
 def test_provider_calendar_block_and_insurance_intake() -> None:
     patient = client.get("/api/v1/patients").json()["items"][0]
     provider = client.get("/api/v1/providers").json()["items"][0]

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, CalendarCheck2, LogOut, MessageSquareText, Users } from 'lucide-react';
+import { Activity, CalendarCheck2, LogOut, MessageSquareText, MoonStar, SunMedium, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -109,6 +109,27 @@ function getAuthHeaders(): HeadersInit {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') {
+      return 'light';
+    }
+
+    const storedTheme = window.localStorage.getItem('dental_dashboard_theme');
+    if (storedTheme === 'light' || storedTheme === 'dark') {
+      return storedTheme;
+    }
+
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.style.colorScheme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    window.localStorage.setItem('dental_dashboard_theme', theme);
+  }, [theme]);
+
+  const isDark = theme === 'dark';
+
   const [summary, setSummary] = useState<Summary>({
     appointments_today: 0,
     upcoming: 0,
@@ -478,13 +499,13 @@ export default function DashboardPage() {
   ] as const;
 
   return (
-    <div className="min-h-screen bg-[#e8ebf0] p-4 text-slate-900 md:p-6">
-      <div className="mx-auto max-w-[1600px] overflow-hidden rounded-[28px] border border-[#dfe5ee] bg-[#f4f6fa] shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
-        <div className="flex min-h-[calc(100vh-48px)]">
-          <aside className="w-[268px] shrink-0 border-r border-[#e7ebf1] bg-[#f3f5f8] p-4">
+    <div className={`dashboard-shell min-h-screen p-4 md:p-6 ${isDark ? 'dark bg-slate-950 text-slate-100' : 'bg-[#e8ebf0] text-slate-900'}`}>
+      <div className={`mx-auto max-w-[1600px] overflow-hidden rounded-[28px] border shadow-[0_20px_60px_rgba(15,23,42,0.08)] ${isDark ? 'border-slate-800 bg-slate-950' : 'border-[#dfe5ee] bg-[#f4f6fa]'}`}>
+        <div className={`flex min-h-[calc(100vh-48px)] ${isDark ? 'bg-slate-950' : 'bg-[#f4f6fa]'}`}>
+          <aside className={`w-[268px] shrink-0 border-r p-4 ${isDark ? 'border-slate-800 bg-[#111827] text-slate-100' : 'border-[#e7ebf1] bg-[#f3f5f8] text-slate-900'}`}>
             <div className="mb-6 flex items-center gap-3 px-2 py-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0f172a] text-xs font-bold text-white">S</div>
-              <div className="text-xl font-bold tracking-[-0.03em] text-slate-900">Shoopers</div>
+              <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${isDark ? 'bg-cyan-500/20 text-cyan-300' : 'bg-[#0f172a] text-white'}`}>A</div>
+              <div className={`text-xl font-bold tracking-[-0.03em] ${isDark ? 'text-white' : 'text-slate-900'}`}>Ava Dental</div>
             </div>
 
             <nav className="space-y-1.5">
@@ -519,38 +540,41 @@ export default function DashboardPage() {
           </aside>
 
           <main className="flex-1 bg-[#f4f6fa] px-5 py-4">
-            <header className="mb-5 flex items-center justify-between gap-4 rounded-[18px] border border-[#e5e7eb] bg-[#f8fafc] px-4 py-3 shadow-[0_1px_0_rgba(15,23,42,0.02)]">
+            <header className={`mb-5 flex items-center justify-between gap-4 rounded-[18px] border px-4 py-3 shadow-[0_1px_0_rgba(15,23,42,0.02)] ${isDark ? 'border-slate-800 bg-slate-900' : 'border-[#e5e7eb] bg-[#f8fafc]'}`}>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#e5e7eb] bg-white text-slate-400">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${isDark ? 'border-slate-700 bg-slate-800 text-slate-400' : 'border-[#e5e7eb] bg-white text-slate-400'}`}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
                     <circle cx="11" cy="11" r="6" />
                     <path d="M16 16L21 21" />
                   </svg>
                 </div>
-                <div className="flex h-10 w-[360px] items-center gap-2 rounded-xl border border-[#e5e7eb] bg-white px-3 text-sm text-slate-500 shadow-sm">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 text-slate-400">
+<div className={`flex h-10 w-[360px] items-center gap-2 rounded-xl border px-3 text-sm shadow-sm ${isDark ? 'border-slate-700 bg-slate-800 text-slate-300' : 'border-[#e5e7eb] bg-white text-slate-500'}`}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`h-4 w-4 ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>
                     <circle cx="11" cy="11" r="6" />
                     <path d="M16 16L21 21" />
                   </svg>
                   <span>Search anything...</span>
-                  <span className="ml-auto rounded-md border border-[#e5e7eb] bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">⌘K</span>
+                  <span className={`ml-auto rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${isDark ? 'border-slate-700 bg-slate-900 text-slate-300' : 'border-[#e5e7eb] bg-slate-50 text-slate-500'}`}>⌘K</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
-                <button type="button" className="flex h-10 w-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-white text-slate-500 transition hover:text-slate-700" aria-label="Settings">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
-                    <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77" />
-                    <circle cx="12" cy="12" r="3.5" />
-                  </svg>
+                <button
+                  type="button"
+                  onClick={() => setTheme(isDark ? 'light' : 'dark')}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border transition ${isDark ? 'border-slate-700 bg-slate-800 text-slate-200 hover:text-white' : 'border-[#e5e7eb] bg-white text-slate-500 hover:text-slate-700'}`}
+                  aria-label="Toggle dashboard theme"
+                  title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  {isDark ? <SunMedium className="h-4 w-4" /> : <MoonStar className="h-4 w-4" />}
                 </button>
-                <button type="button" className="flex h-10 w-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-white text-slate-500 transition hover:text-slate-700" aria-label="Notifications">
+                <button type="button" className={`flex h-10 w-10 items-center justify-center rounded-full border transition ${isDark ? 'border-slate-700 bg-slate-800 text-slate-200 hover:text-white' : 'border-[#e5e7eb] bg-white text-slate-500 hover:text-slate-700'}`} aria-label="Notifications">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
                     <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
                     <path d="M10 20a2 2 0 0 0 4 0" />
                   </svg>
                 </button>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f0f4ff] text-sm font-semibold text-slate-700 ring-2 ring-white">A</div>
+                <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ring-2 ring-white ${isDark ? 'bg-[#f0f4ff] text-slate-700' : 'bg-[#f0f4ff] text-slate-700'}`}>A</div>
               </div>
             </header>
 

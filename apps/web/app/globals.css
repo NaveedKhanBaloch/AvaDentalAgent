@@ -61,3 +61,55 @@ textarea::placeholder {
   background: #d5dbe4;
   border-radius: 999px;
 }
+
+.dashboard-shell {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.dashboard-shell.dark {
+  background: #020817;
+  color: #e2e8f0;
+}
+
+.dashboard-shell.dark .bg-white,
+.dashboard-shell.dark .bg-slate-50,
+.dashboard-shell.dark .bg-slate-100,
+.dashboard-shell.dark .bg-[#f8fafc],
+.dashboard-shell.dark .bg-[#f4f6fa],
+.dashboard-shell.dark .bg-[#f3f5f8] {
+  background-color: #0f172a !important;
+}
+
+.dashboard-shell.dark .text-slate-900,
+.dashboard-shell.dark .text-slate-700,
+.dashboard-shell.dark .text-slate-600,
+.dashboard-shell.dark .text-slate-500,
+.dashboard-shell.dark .text-slate-400,
+.dashboard-shell.dark .text-slate-300 {
+  color: #e2e8f0 !important;
+}
+
+.dashboard-shell.dark .border-slate-200,
+.dashboard-shell.dark .border-[#e5e7eb],
+.dashboard-shell.dark .border-[#e7ebf1],
+.dashboard-shell.dark .border-[#dfe5ee] {
+  border-color: #334155 !important;
+}
+
+.dashboard-shell.dark .bg-slate-900,
+.dashboard-shell.dark .bg-[#111827],
+.dashboard-shell.dark .bg-[#020817] {
+  background-color: #0f172a !important;
+}
+
+.dashboard-shell.dark .text-white {
+  color: #f8fafc !important;
+}
+
+.dashboard-shell.dark .text-slate-100 {
+  color: #f1f5f9 !important;
+}
+
+.dashboard-shell.dark [class*='bg-cyan-'] {
+  filter: brightness(1.08);
+}
