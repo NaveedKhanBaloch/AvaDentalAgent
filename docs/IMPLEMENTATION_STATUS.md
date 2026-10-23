@@ -1,34 +1,7 @@
-# Implementation Status
+# Implementation status
 
-## Current status
+Phase 1 local implementation and automated verification are documented in [the final report](architecture/phase1-implementation-report.md). The original status file described an earlier scaffold and was stale.
 
-- Project scaffold created for monorepo with frontend, backend, Docker, and docs.
-- FastAPI backend skeleton is running with basic health and system routes.
-- Next.js dashboard shell is in place for login and dashboard pages.
-- Docker Compose files are configured for web, API, postgres, redis, and worker services.
-- Local backend dependency installation has been verified in the project virtual environment.
+Implemented: shared scheduling with provider configuration and PostgreSQL overlap protection; lifecycle/history; secure Retell functions with confirmed/idempotent new-intake booking and safe identity fallback; call-event verification/deduplication; real callback queue; dashboard additions; production Docker/Coolify preparation.
 
-## Completed
-
-- Monorepo structure under `apps/web` and `apps/api`
-- Docker Compose foundation
-- FastAPI project bootstrap
-- Basic health endpoints
-- Authentication scaffold
-- Scheduling endpoint scaffold
-- Dashboard pages and login shell
-- Initial documentation set
-
-## Limitations
-
-- Full multi-tenant CRUD, RBAC, scheduling engine, migration system, and production DevOps pipeline remain to be completed in subsequent implementation phases.
-- Retell endpoints are scaffolded and ready to expand, but full webhook verification and production security patterns are not yet fully implemented.
-
-## Next phase
-
-- Implement ORM models and actual Alembic migrations
-- Add secure authentication flows and tenant context
-- Build providers, services, appointments, and patient management
-- Add full scheduling engine and conflict prevention
-- Expand frontend dashboard with real data integration
-- Add integration tests and CI workflow
+Phase 1 live acceptance remains incomplete. No live Retell agent/phone transfer or production deployment was tested. Existing-patient AI actions require human verification because no approved verification infrastructure exists. Current frontend dependency advisories remain a release blocker while the mandated Next.js 14/React 18 stack is retained. See the report for exact executed tests, configuration changes and limitations. Phase 2 has not started.

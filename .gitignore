@@ -37,3 +37,8 @@ redis-data/
 # Misc
 coverage/
 .dist/
+
+# Local test artifacts
+test-results/
+playwright-report/
+*.tsbuildinfo

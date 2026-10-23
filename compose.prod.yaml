@@ -7,18 +7,26 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
-    networks:
-      - dentalvoice
+    networks: [dentalvoice]
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
-    networks:
-      - dentalvoice
+    networks: [dentalvoice]
 
   api:
     build:
@@ -26,16 +34,26 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_ENV: production
+      DEMO_SEED_ENABLED: "false"
+      STRICT_AUTH_MODE: "true"
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
-      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      RETELL_API_KEY: ${RETELL_API_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      RETELL_FUNCTION_RATE_LIMIT: ${RETELL_FUNCTION_RATE_LIMIT:-120}
     depends_on:
-      - postgres
-      - redis
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
-    networks:
-      - dentalvoice
-    command: sh -c "alembic upgrade head && gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"
+    networks: [dentalvoice]
+    command: sh -c "alembic upgrade head && gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --access-logfile - --error-logfile -"
 
   worker:
     build:
@@ -46,28 +64,33 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
     depends_on:
-      - postgres
-      - redis
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "from redis import Redis; from app.core.config import get_settings; assert Redis.from_url(get_settings().redis_url).get('dentalvoice:worker:heartbeat')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
-    networks:
-      - dentalvoice
+    networks: [dentalvoice]
     command: python -m app.workers
 
   web:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
-      NEXT_PUBLIC_APP_NAME: "DentalVoice AI"
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
-    networks:
-      - dentalvoice
+    networks: [dentalvoice]
 
 volumes:
   postgres_data:
   redis_data:
-
 networks:
   dentalvoice:
     driver: bridge

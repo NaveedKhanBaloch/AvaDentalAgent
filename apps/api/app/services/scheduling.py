@@ -171,18 +171,24 @@ def available_slots_for_day(db, clinic, target_date, provider_id, service_id, ti
                 raise
             continue
         duration = timedelta(minutes=service.default_duration_minutes)
-        for opening, closing in windows_for_day(db, clinic, provider, day):
+        day_end = day + timedelta(days=1)
+        exceptions = get_clinic_day_exceptions(db, clinic.id, provider.id, day, day_end + timedelta(days=1))
+        occupied = db.query(Appointment).filter(Appointment.clinic_id == clinic.id,
+            Appointment.provider_id == provider.id, Appointment.status != "cancelled",
+            Appointment.start_time < day_end.astimezone(UTC) + timedelta(days=1),
+            Appointment.end_time > day.astimezone(UTC)).all()
+        windows = windows_for_day(db, clinic, provider, day - timedelta(days=1)) + windows_for_day(db, clinic, provider, day)
+        seen = set()
+        for opening, closing in windows:
             cursor = opening
             while cursor + duration <= closing:
                 end = cursor + duration
                 local = cursor.astimezone(tz)
                 matches = not time_preference or (time_preference == "morning" and local.hour < 12) or (time_preference == "afternoon" and 12 <= local.hour < 17) or (time_preference == "evening" and local.hour >= 17)
-                if matches:
-                    try:
-                        validate_slot(db, clinic, provider, service, cursor, end)
-                        slots.append({"start_time": local, "end_time": end.astimezone(tz), "provider_id": provider.id, "timezone": str(tz)})
-                    except (ScheduleValidationError, SchedulingConflictError):
-                        pass
+                occupied_slot = any(cursor < stored_datetime(a.end_time) and stored_datetime(a.start_time) < end for a in occupied)
+                if local.date() == day.date() and cursor not in seen and matches and not occupied_slot and not slot_overlaps_exception(cursor, end, exceptions):
+                    slots.append({"start_time": local, "end_time": end.astimezone(tz), "provider_id": provider.id, "timezone": str(tz)})
+                    seen.add(cursor)
                 cursor = end
     return sorted(slots, key=lambda s: (s["start_time"].astimezone(UTC), s["provider_id"]))[:12]
 
@@ -225,8 +231,12 @@ def save_appointment(db, clinic, patient, data, actor_type="user", actor_id=None
         moving = True
     provider_id = data.get("provider_id") or (appointment.provider_id if existing else None)
     service_id = data.get("service_id") or (appointment.service_id if existing else None)
-    provider, service = resolve_provider_and_service(db, clinic, provider_id, service_id)
-    get_provider_clinic_lock(db, provider.id)
+    if moving:
+        provider, service = resolve_provider_and_service(db, clinic, provider_id, service_id)
+    else:
+        provider, service = db.get(Provider, provider_id), db.get(DentalService, service_id)
+    if provider is not None:
+        get_provider_clinic_lock(db, provider.id)
     if moving:
         start_value = data.get("start_time") or (stored_datetime(appointment.start_time) if existing else None)
         end_value = data.get("end_time") or (stored_datetime(appointment.end_time) if existing else None)
@@ -242,7 +252,7 @@ def save_appointment(db, clinic, patient, data, actor_type="user", actor_id=None
     if "notes" in data:
         appointment.notes = data["notes"]
     db.flush()
-    write_audit_event(db, tenant_id=clinic.tenant_id, clinic_id=clinic.id, action="appointment.update" if existing else "appointment.create",
+    write_audit_event(db, tenant_id=clinic.tenant_id, clinic_id=clinic.id, action=("appointment.reschedule" if moving else "appointment.update") if existing else "appointment.create",
         entity_type="appointment", entity_id=appointment.id, actor_type=actor_type, actor_id=actor_id,
         metadata={"clinic_id": clinic.id, "before": before, "after": {"status": target, "start_time": appointment.start_time.isoformat(),
         "end_time": appointment.end_time.isoformat(), "provider_id": appointment.provider_id}})

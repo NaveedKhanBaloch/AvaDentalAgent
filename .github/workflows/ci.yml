@@ -8,6 +8,19 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: synthetic-ci-password
+          POSTGRES_DB: dentalvoice_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U test_user -d dentalvoice_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_POSTGRES_URL: postgresql+psycopg://test_user:synthetic-ci-password@localhost:5432/dentalvoice_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +46,7 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd apps/web
-          npm install
+          npm ci
       - name: Build frontend
         run: |
           cd apps/web

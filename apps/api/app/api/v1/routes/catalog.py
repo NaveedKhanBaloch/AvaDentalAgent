@@ -37,7 +37,7 @@ class ProviderUpdate(BaseModel):
 class ServiceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
-    default_duration_minutes: int = 30
+    default_duration_minutes: int = Field(default=30, ge=1, le=1440)
     indicative_price: float = 0.0
     currency: str = "USD"
     active_status: bool = True
@@ -46,7 +46,7 @@ class ServiceCreate(BaseModel):
 class ServiceUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    default_duration_minutes: int | None = None
+    default_duration_minutes: int | None = Field(default=None, ge=1, le=1440)
     indicative_price: float | None = None
     currency: str | None = None
     active_status: bool | None = None
@@ -77,7 +77,7 @@ def list_providers(
     }
 
 
-@router.post("/providers", status_code=status.HTTP_201_CREATED)
+@router.post("/providers", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("manage_schedule"))])
 def create_provider(payload: ProviderCreate, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     provider = Provider(
@@ -94,7 +94,7 @@ def create_provider(payload: ProviderCreate, db: Session = Depends(get_db)) -> d
     return {"id": provider.id, "name": provider.name, "title": provider.title, "specialty": provider.specialty}
 
 
-@router.patch("/providers/{provider_id}")
+@router.patch("/providers/{provider_id}", dependencies=[Depends(require_permission("manage_schedule"))])
 def update_provider(provider_id: str, payload: ProviderUpdate, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     provider = db.query(Provider).filter(Provider.id == provider_id, Provider.clinic_id == clinic.id).first()
@@ -107,7 +107,7 @@ def update_provider(provider_id: str, payload: ProviderUpdate, db: Session = Dep
     return {"id": provider.id, "name": provider.name, "title": provider.title, "specialty": provider.specialty, "active_status": provider.active_status}
 
 
-@router.delete("/providers/{provider_id}")
+@router.delete("/providers/{provider_id}", dependencies=[Depends(require_permission("manage_schedule"))])
 def delete_provider(provider_id: str, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     provider = db.query(Provider).filter(Provider.id == provider_id, Provider.clinic_id == clinic.id).first()
@@ -145,7 +145,7 @@ def list_services(
     }
 
 
-@router.post("/services", status_code=status.HTTP_201_CREATED)
+@router.post("/services", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("manage_schedule"))])
 def create_service(payload: ServiceCreate, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     service = DentalService(
@@ -163,7 +163,7 @@ def create_service(payload: ServiceCreate, db: Session = Depends(get_db)) -> dic
     return {"id": service.id, "name": service.name, "description": service.description, "default_duration_minutes": service.default_duration_minutes}
 
 
-@router.patch("/services/{service_id}")
+@router.patch("/services/{service_id}", dependencies=[Depends(require_permission("manage_schedule"))])
 def update_service(service_id: str, payload: ServiceUpdate, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     service = db.query(DentalService).filter(DentalService.id == service_id, DentalService.clinic_id == clinic.id).first()
@@ -176,7 +176,7 @@ def update_service(service_id: str, payload: ServiceUpdate, db: Session = Depend
     return {"id": service.id, "name": service.name, "description": service.description, "default_duration_minutes": service.default_duration_minutes, "indicative_price": service.indicative_price, "active_status": service.active_status}
 
 
-@router.delete("/services/{service_id}")
+@router.delete("/services/{service_id}", dependencies=[Depends(require_permission("manage_schedule"))])
 def delete_service(service_id: str, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     service = db.query(DentalService).filter(DentalService.id == service_id, DentalService.clinic_id == clinic.id).first()
@@ -270,3 +270,46 @@ def get_provider_calendar(provider_id: str, date: str | None = None, db: Session
             for block in blocks
         ],
     }
+
+# Additive configuration API; no implicit schedule or compatibility changes.
+class WorkingWindow(BaseModel):
+    weekday: int = Field(ge=0, le=6)
+    opening_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    closing_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+class ProviderScheduleConfig(BaseModel):
+    working_hours: list[WorkingWindow] = Field(max_length=28)
+    service_ids: list[str] = Field(max_length=100)
+
+
+@router.get("/providers/{provider_id}/scheduling")
+def provider_schedule_configuration(provider_id: str, db: Session = Depends(get_db)):
+    from app.models.models import ProviderWorkingHours, ProviderService
+    _, clinic = get_default_tenant_and_clinic(db)
+    provider = db.query(Provider).filter(Provider.id == provider_id, Provider.clinic_id == clinic.id).first()
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    return {"timezone": clinic.timezone, "working_hours": [{"weekday": h.weekday, "opening_time": h.opening_time,
+        "closing_time": h.closing_time} for h in db.query(ProviderWorkingHours).filter_by(provider_id=provider_id)],
+        "service_ids": [m.service_id for m in db.query(ProviderService).filter_by(provider_id=provider_id)]}
+
+
+@router.put("/providers/{provider_id}/scheduling", dependencies=[Depends(require_permission("manage_schedule"))])
+def set_provider_schedule_configuration(provider_id: str, payload: ProviderScheduleConfig, db: Session = Depends(get_db)):
+    from app.models.models import ProviderWorkingHours, ProviderService
+    from app.services.scheduling import get_provider_clinic_lock
+    _, clinic = get_default_tenant_and_clinic(db)
+    if not db.query(Provider).filter(Provider.id == provider_id, Provider.clinic_id == clinic.id).first():
+        raise HTTPException(404, "Provider not found")
+    requested = set(payload.service_ids)
+    if db.query(DentalService).filter(DentalService.clinic_id == clinic.id, DentalService.id.in_(requested)).count() != len(requested):
+        raise HTTPException(400, "Service unavailable for this clinic")
+    if any(h.opening_time == h.closing_time for h in payload.working_hours):
+        raise HTTPException(400, "Working windows must have positive duration")
+    get_provider_clinic_lock(db, provider_id)
+    db.query(ProviderWorkingHours).filter_by(provider_id=provider_id).delete()
+    db.query(ProviderService).filter_by(provider_id=provider_id).delete()
+    db.add_all([ProviderWorkingHours(provider_id=provider_id, **h.model_dump()) for h in payload.working_hours])
+    db.add_all([ProviderService(provider_id=provider_id, service_id=s) for s in requested])
+    db.commit()
+    return provider_schedule_configuration(provider_id, db)

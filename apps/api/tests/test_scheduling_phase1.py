@@ -95,3 +95,37 @@ def test_cross_clinic_patient_is_rejected():
         patient = Patient(tenant_id=tenant, clinic_id=clinic.id, first_name="Other", last_name="Test")
         db.add(patient); db.commit()
     assert client.post("/api/v1/appointments", json=booking(patient_id=patient.id)).status_code == 404
+
+
+def test_other_timezone_and_overnight_window():
+    body = booking()
+    with SessionLocal() as db:
+        clinic = db.query(Clinic).first()
+        clinic.timezone = "Asia/Karachi"
+        db.query(ClinicBusinessHours).filter(ClinicBusinessHours.clinic_id == clinic.id).delete()
+        db.add(ClinicBusinessHours(clinic_id=clinic.id, weekday=1, opening_time="22:00", closing_time="02:00"))
+        db.commit()
+    response = client.post("/api/v1/appointments", json=booking(start_time="2026-11-10T23:45:00+05:00", end_time="2026-11-11T00:15:00+05:00"))
+    assert response.status_code == 201, response.text
+    detail = client.get('/api/v1/appointments/' + response.json()['appointment_id']).json()
+    assert detail['timezone'] == 'Asia/Karachi'
+
+
+def test_cancel_after_provider_deactivation():
+    body = booking()
+    appointment_id = client.post("/api/v1/appointments", json=body).json()["appointment_id"]
+    with SessionLocal() as db:
+        db.get(Provider, body["provider_id"]).active_status = False
+        db.commit()
+    assert client.delete('/api/v1/appointments/' + appointment_id).status_code == 200
+
+
+def test_full_provider_day_and_schedule_config_api():
+    body = booking()
+    response = client.put(f'/api/v1/providers/{body["provider_id"]}/scheduling', json={
+        "working_hours": [{"weekday": 1, "opening_time": "10:00", "closing_time": "10:30"}],
+        "service_ids": [body['service_id']]})
+    assert response.status_code == 200
+    assert client.post('/api/v1/appointments', json=body).status_code == 201
+    availability = client.post('/api/v1/appointments/availability', json={"preferred_date": "2026-11-10", "provider_id": body['provider_id'], "service_id": body['service_id']}).json()
+    assert availability['slots'] == []

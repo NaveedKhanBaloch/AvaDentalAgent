@@ -1,7 +1,7 @@
 from datetime import datetime
 import json
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
 from app.core.authorization import require_permission, request_user
@@ -38,6 +38,9 @@ def persist(db, clinic, patient, data, appointment=None):
     except (SchedulingConflictError, IntegrityError) as exc:
         db.rollback()
         raise HTTPException(409, "Appointment overlaps with an existing provider schedule.") from exc
+    except OperationalError as exc:
+        db.rollback()
+        raise HTTPException(503, "Schedule could not be confirmed. Refresh before retrying.") from exc
     except (ScheduleValidationError, InvalidStatusTransitionError) as exc:
         db.rollback()
         raise HTTPException(400, str(exc)) from exc

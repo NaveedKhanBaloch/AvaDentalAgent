@@ -1,0 +1,49 @@
+# Disposable synthetic-data stack. Never use this file for production.
+name: avadental-e2e
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dentalvoice_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: synthetic-test-password
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d dentalvoice_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  api:
+    build: ./apps/api
+    environment:
+      APP_ENV: development
+      STRICT_AUTH_MODE: "true"
+      DATABASE_URL: postgresql+psycopg://test_user:synthetic-test-password@postgres:5432/dentalvoice_test
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_ORIGINS: http://localhost:33001
+      DEMO_ADMIN_PASSWORD: Phase1Synthetic123!
+    command: sh -c "alembic upgrade head && python -m app.seed && gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["127.0.0.1:58001:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:58001
+    ports: ["127.0.0.1:33001:3000"]
+    depends_on:
+      api: {condition: service_healthy}

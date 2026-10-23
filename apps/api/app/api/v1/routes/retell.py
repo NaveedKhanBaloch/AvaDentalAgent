@@ -21,7 +21,7 @@ router = APIRouter(prefix="/integrations/retell", tags=["retell"])
 logger = logging.getLogger(__name__)
 
 class Args(BaseModel):
-    model_config = ConfigDict(extra="ignore", str_max_length=500)
+    model_config = ConfigDict(extra="ignore", str_max_length=500, str_strip_whitespace=True)
     clinic_id: str | None = None
     provider_id: str | None = None
     service_id: str | None = None
@@ -32,9 +32,9 @@ class Args(BaseModel):
     time_preference: str | None = None
     start_time: str | None = None
     end_time: str | None = None
-    first_name: str | None = None
-    last_name: str | None = None
-    phone: str | None = None
+    first_name: str | None = Field(default=None, min_length=1, max_length=120)
+    last_name: str | None = Field(default=None, min_length=1, max_length=120)
+    phone: str | None = Field(default=None, min_length=7, max_length=30)
     confirmed: StrictBool = False
     idempotency_key: str | None = Field(default=None, max_length=128)
     reason: str | None = None
@@ -60,7 +60,7 @@ def process_function(db, payload, integration_id, operation, correlation):
     enforce_function_rate_limit(clinic.id, call_id or "information")
     if operation in {"lookup_patient", "verify-patient", "get_appointment", "reschedule_appointment", "cancel_appointment"}:
         # No approved OTP/session-to-call bridge is configured. Never infer identity from LLM args.
-        return result("verification_required", "A staff member must verify your identity. Use create-followup to request assistance.",
+        return result("verification_required", "A staff member must verify your identity. Use request_human_assistance to request assistance.",
                       human_assistance_required=True)
     if operation == "check_availability":
         requested = args.preferred_date or args.date
@@ -159,7 +159,7 @@ ALIASES = {
     "lookup_patient": ["get-patient"], "verify-patient": [], "get_appointment": ["get-appointment"],
     "reschedule_appointment": ["reschedule-appointment"], "cancel_appointment": ["cancel-appointment"],
     "get_treatment_information": ["get-treatment-information"], "get_clinic_information": ["get-clinic-information"],
-    "create-followup": [],
+    "create-followup": ["request_human_assistance"],
 }
 for operation, aliases in ALIASES.items():
     handler = function_handler(operation)

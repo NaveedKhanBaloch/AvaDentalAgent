@@ -18,8 +18,14 @@ def pg():
     url = os.environ.get("TEST_POSTGRES_URL")
     if not url:
         pytest.skip("TEST_POSTGRES_URL not supplied; PostgreSQL concurrency is not asserted")
+    from sqlalchemy.engine import make_url
+    if not any(part in (make_url(url).database or "").lower() for part in ("test", "concurrency")):
+        pytest.fail("Refusing PostgreSQL tests: database name must identify a disposable test database")
     schema = "phase1_test_" + uuid.uuid4().hex
     admin = create_engine(url)
+    with admin.connect() as conn:
+        if conn.execute(text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('appointments','alembic_version')")).scalar():
+            pytest.fail("Refusing PostgreSQL tests with application tables in public; use an empty disposable test DB")
     with admin.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema},public"})
@@ -76,3 +82,77 @@ def test_simultaneous_booking(pg, shared_provider, through_service):
     assert sorted(outcomes) == (["conflict", "created"] if shared_provider else ["created", "created"])
     with Session(engine) as db:
         assert db.query(Appointment).count() == (1 if shared_provider else 2)
+
+
+@pytest.mark.parametrize("through_service", [True, False])
+def test_simultaneous_reschedules(pg, through_service):
+    engine, (tenant_id, clinic_id, patient_id, providers, service_id) = pg
+    start = datetime(2026,11,10,10,tzinfo=timezone.utc)
+    ids = []
+    with Session(engine) as db:
+        for offset in (0, 1):
+            a = Appointment(tenant_id=tenant_id, clinic_id=clinic_id, patient_id=patient_id,
+                provider_id=providers[0], service_id=service_id, start_time=start+timedelta(hours=offset),
+                end_time=start+timedelta(hours=offset, minutes=30), status="scheduled")
+            db.add(a); db.flush(); ids.append(a.id)
+        db.commit()
+    barrier = Barrier(2)
+    def move(aid):
+        with Session(engine) as db:
+            a = db.get(Appointment, aid)
+            barrier.wait(timeout=10)
+            try:
+                if through_service:
+                    save_appointment(db, db.get(Clinic, clinic_id), db.get(Patient, patient_id),
+                        {"start_time": start+timedelta(hours=2), "end_time": start+timedelta(hours=2,minutes=30)}, appointment=a)
+                else:
+                    a.start_time, a.end_time = start+timedelta(hours=2), start+timedelta(hours=2,minutes=30)
+                db.commit()
+                return "moved"
+            except (IntegrityError, SchedulingConflictError):
+                db.rollback()
+                return "conflict"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(move, ids)) == ["conflict", "moved"]
+
+
+def test_concurrent_duplicate_webhooks(pg):
+    from app.models.models import RetellIntegration, WebhookEvent, CallLog
+    from app.api.v1.routes.retell import process_webhook
+    engine, (tenant_id, clinic_id, _, _, _) = pg
+    with Session(engine) as db:
+        db.add(RetellIntegration(tenant_id=tenant_id, clinic_id=clinic_id, agent_id="agent_pg", enabled=True))
+        db.commit()
+    barrier = Barrier(2)
+    def event(_):
+        with Session(engine) as db:
+            barrier.wait(timeout=10)
+            return process_webhook(db, {"event": "call_ended", "call": {"agent_id": "agent_pg", "call_id": "call_pg"}})["status"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(event, [0,1])) == ["accepted", "duplicate"]
+    with Session(engine) as db:
+        assert db.query(WebhookEvent).count() == 1
+        assert db.query(CallLog).count() == 1
+
+
+def test_concurrent_retell_booking_retry(pg):
+    from app.models.models import RetellIntegration, IdempotencyRecord
+    from app.api.v1.routes.retell import process_function
+    engine, (tenant_id, clinic_id, _, providers, service_id) = pg
+    with Session(engine) as db:
+        db.add(RetellIntegration(tenant_id=tenant_id, clinic_id=clinic_id, agent_id="agent_retry", enabled=True))
+        db.commit()
+    payload = {"call": {"agent_id": "agent_retry", "call_id": "call_retry"}, "args": {
+        "first_name": "Synthetic", "last_name": "Retry", "phone": "+12025550123", "provider_id": providers[0],
+        "service_id": service_id, "start_time": "2026-11-10T10:00:00+00:00", "confirmed": True, "idempotency_key": "same-action"}}
+    barrier = Barrier(2)
+    def book(_):
+        with Session(engine) as db:
+            barrier.wait(timeout=10)
+            return process_function(db, payload, None, "book_appointment", "synthetic-test")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(book, [0,1]))
+    assert first["success"] and first["appointment_id"] == second["appointment_id"]
+    with Session(engine) as db:
+        assert db.query(Appointment).count() == 1
+        assert db.query(IdempotencyRecord).count() == 1

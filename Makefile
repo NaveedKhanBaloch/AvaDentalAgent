@@ -15,13 +15,13 @@ up:
 	docker compose up --build
 
 down:
-	docker compose down -v
+	docker compose down
 
 api-test:
 	cd apps/api && . .venv/bin/activate && pytest -q
 
 web-test:
-	cd apps/web && npm test -- --runInBand
+	cd apps/web && npm run test:e2e
 
 lint:
 	cd apps/api && . .venv/bin/activate && ruff check . && black --check .

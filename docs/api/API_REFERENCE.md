@@ -43,3 +43,24 @@
 - POST /api/v1/integrations/retell/functions/cancel-appointment
 - POST /api/v1/integrations/retell/functions/create-followup
 - POST /api/v1/integrations/retell/webhooks
+
+## Phase 1 contract changes
+
+Production dashboard routes require JWT + active clinic membership. Existing create/update appointment permissions remain, and catalog/schedule mutations enforce existing manage_schedule permission. Unauthenticated demo access is limited to nonproduction configurations with strict auth disabled. Sensitive object reads/writes are clinic-scoped.
+
+Additional scheduling endpoints:
+
+- PATCH /api/v1/appointments/{appointment_id}
+- PATCH /api/v1/appointments/{appointment_id}/status
+- DELETE /api/v1/appointments/{appointment_id} (validated cancellation, no hard deletion)
+- GET /api/v1/appointments/{appointment_id}/history
+- GET /api/v1/providers/{provider_id}/scheduling
+- PUT /api/v1/providers/{provider_id}/scheduling
+
+Provider scheduling configuration is `{working_hours:[{weekday:0,opening_time:"08:00",closing_time:"17:00"}],service_ids:["SERVICE_ID"]}` in clinic local time. Empty working_hours means inherit clinic hours; otherwise an unlisted weekday is unavailable. Empty service_ids preserves all-service compatibility; otherwise only listed active clinic services are eligible. Overnight windows have closing_time earlier than opening_time. Clinic windows still bound provider windows. Clinic/provider exceptions block overlapping intervals.
+
+Appointments must be at least the configured service duration; longer intervals are accepted within working hours. New appointments start scheduled/confirmed; completed/cancelled/no_show cannot be rescheduled. Unknown states are rejected rather than silently normalized. Returned scheduling timestamps include offsets and a timezone name; naive ambiguous/nonexistent DST inputs are rejected. Existing date fields and all existing routes remain.
+
+The availability response retains success/status/message/slots and adds timezone plus provider IDs. Appointment listings add end_time, patient/provider/service IDs, source and timezone. Call listings add appointment association, escalation and processing time. Summary adds ai_bookings, rescheduled and unresolved_calls. No metric implies a confirmed transfer or verified patient unless that state actually exists.
+
+Retell auth, explicit confirmation, new-intake-only booking, privacy fallback and webhook behavior have intentional security changes; use the complete [Retell contract guide](RETELL_FUNCTIONS.md). Webhooks never create bookings. The old change-password route remains a stub; do not use it as an actual password-change implementation.

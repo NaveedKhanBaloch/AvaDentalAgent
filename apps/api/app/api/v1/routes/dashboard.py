@@ -1,50 +1,47 @@
-from datetime import date, datetime, timedelta
-
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
 from app.db.session import get_db
-from app.models.models import Appointment, CallLog, FollowUp, Patient
+from app.models.models import Appointment, CallLog, FollowUp, Patient, AuditLog
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-
 @router.get("/summary")
-def dashboard_summary(db: Session = Depends(get_db)) -> dict:
+def dashboard_summary(db: Session = Depends(get_db)):
     _, clinic = get_default_tenant_and_clinic(db)
-    now = datetime.now()
-    today = date.today()
-    appointments = db.query(Appointment).filter(Appointment.clinic_id == clinic.id).all()
-
-    summary = {
-        "appointments_today": sum(1 for appt in appointments if appt.start_time.date() == today),
-        "upcoming": sum(1 for appt in appointments if appt.start_time >= now and appt.start_time <= now + timedelta(days=7)),
-        "pending_confirmations": sum(1 for appt in appointments if appt.status in {"scheduled", "pending"}),
-        "cancelled": sum(1 for appt in appointments if appt.status == "cancelled"),
+    now = datetime.now(timezone.utc)
+    today = now.astimezone(ZoneInfo(clinic.timezone or "UTC")).replace(hour=0, minute=0, second=0, microsecond=0)
+    appointments = db.query(Appointment).filter(Appointment.clinic_id == clinic.id)
+    calls = db.query(CallLog).filter(CallLog.clinic_id == clinic.id)
+    return {
+        "appointments_today": appointments.filter(Appointment.start_time >= today.astimezone(timezone.utc),
+            Appointment.start_time < (today + timedelta(days=1)).astimezone(timezone.utc)).count(),
+        "upcoming": appointments.filter(Appointment.start_time >= now, Appointment.start_time <= now + timedelta(days=7),
+            Appointment.status.in_(["scheduled", "confirmed"])).count(),
+        "pending_confirmations": appointments.filter(Appointment.status == "scheduled").count(),
+        "cancelled": appointments.filter(Appointment.status == "cancelled").count(),
+        "ai_bookings": appointments.filter(Appointment.source == "retell").count(),
+        "rescheduled": db.query(AuditLog).filter(AuditLog.tenant_id == clinic.tenant_id,
+            AuditLog.action == "appointment.reschedule", AuditLog.entity_id.in_(appointments.with_entities(Appointment.id))).count(),
         "new_patients": db.query(Patient).filter(Patient.clinic_id == clinic.id, Patient.created_at >= now - timedelta(days=30)).count(),
-        "calls_handled": db.query(CallLog).filter(CallLog.clinic_id == clinic.id).count(),
-        "missed_calls": db.query(CallLog).filter(CallLog.clinic_id == clinic.id, CallLog.status == "missed").count(),
+        "calls_handled": calls.count(),
+        "missed_calls": calls.filter(CallLog.status == "missed").count(),
+        "unresolved_calls": calls.filter(CallLog.outcome == "unresolved").count(),
         "follow_up_requests": db.query(FollowUp).filter(FollowUp.clinic_id == clinic.id, FollowUp.status.in_(["pending", "in_progress"])).count(),
     }
-    return summary
-
 
 @router.get("/analytics")
-def dashboard_analytics(db: Session = Depends(get_db)) -> dict:
+def dashboard_analytics(db: Session = Depends(get_db)):
     _, clinic = get_default_tenant_and_clinic(db)
-    appointments = db.query(Appointment).filter(Appointment.clinic_id == clinic.id).all()
+    today = datetime.now(ZoneInfo(clinic.timezone or "UTC")).replace(hour=0, minute=0, second=0, microsecond=0)
     trends = []
     for offset in range(6, -1, -1):
-        day = date.today() - timedelta(days=offset)
-        count = sum(1 for appt in appointments if appt.start_time.date() == day)
-        trends.append(count)
-
-    call_outcomes = {"booked": 0, "missed": 0, "follow_up": 0}
-    for outcome in ("booked", "missed", "follow_up"):
-        call_outcomes[outcome] = db.query(CallLog).filter(CallLog.clinic_id == clinic.id, CallLog.outcome == outcome).count()
-
-    return {
-        "appointment_trends": trends,
-        "call_outcomes": call_outcomes,
-    }
+        day = today - timedelta(days=offset)
+        trends.append(db.query(Appointment).filter(Appointment.clinic_id == clinic.id,
+            Appointment.start_time >= day.astimezone(timezone.utc),
+            Appointment.start_time < (day + timedelta(days=1)).astimezone(timezone.utc)).count())
+    outcomes = dict(db.query(CallLog.outcome, func.count(CallLog.id)).filter(CallLog.clinic_id == clinic.id).group_by(CallLog.outcome).all())
+    return {"appointment_trends": trends, "call_outcomes": {key: outcomes.get(key, 0) for key in ("booked", "missed", "follow_up", "unresolved")}}

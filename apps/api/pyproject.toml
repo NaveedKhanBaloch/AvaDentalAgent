@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
+  "gunicorn>=23.0.0",
   "sqlalchemy>=2.0.35",
   "alembic>=1.13.2",
   "psycopg[binary]>=3.2.1",
@@ -38,17 +39,8 @@ line-length = 100
 [tool.ruff]
 line-length = 100
 
-[tool.setuptools]
-packages = [
-  "app",
-  "app.api",
-  "app.api.v1",
-  "app.api.v1.routes",
-  "app.core",
-  "app.db",
-  "app.models",
-  "app.workers",
-]
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

@@ -13,11 +13,13 @@ from app.api.v1.routes.scheduler import router as scheduler_router
 from app.api.v1.routes.staff import router as staff_router
 from app.api.v1.routes.system import router as system_router
 from app.core.config import get_settings
-from app.db.base import Base
-from app.db.init_db import seed_demo_data
-from app.db.session import engine
 
 settings = get_settings()
+if settings.app_env == "production":
+    if len(settings.jwt_secret_key) < 32 or settings.jwt_secret_key.startswith("change-me"):
+        raise RuntimeError("Production requires a strong JWT_SECRET_KEY")
+    if not settings.database_url.startswith("postgresql"):
+        raise RuntimeError("Production requires PostgreSQL")
 
 app = FastAPI(
     title="DentalVoice AI API",

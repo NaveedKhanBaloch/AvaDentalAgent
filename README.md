@@ -41,3 +41,6 @@ DentalVoice AI is a multi-tenant dental clinic SaaS MVP for local deployment. It
 ## Status
 
 This repository contains the foundation for a working MVP, including project structure, Docker setup, backend APIs, and frontend shell. It is intended for iterative implementation and local development.
+
+
+Phase 1: see [implementation report](docs/architecture/phase1-implementation-report.md), [Retell configuration](docs/api/RETELL_FUNCTIONS.md), [test commands](docs/testing/PHASE1_TESTING.md), and [Coolify preparation](docs/deployment/COOLIFY_HOSTINGER.md). Run Alembic migrations before starting the API; it no longer creates schema on startup or silently switches databases. For an isolated synthetic stack use `docker compose -f compose.test.yaml up --build -d --wait`. Do not use the test Compose file in production.

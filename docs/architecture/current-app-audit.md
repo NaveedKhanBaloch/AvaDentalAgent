@@ -1,3 +1,5 @@
+> Historical baseline. For the source-verified Phase 1 findings, implementation and remaining release blockers, see [Phase 1 report](phase1-implementation-report.md) and [initial audit/plan](phase1-plan-and-audit.md). Earlier completeness claims below are not current acceptance evidence.
+
 # Current Application Architecture Report
 
 ## Scope and method

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, CalendarCheck2, LogOut, MessageSquareText, MoonStar, SunMedium, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
 type Summary = {
   appointments_today: number;
@@ -15,6 +15,9 @@ type Summary = {
   calls_handled: number;
   missed_calls: number;
   follow_up_requests: number;
+  ai_bookings?: number;
+  unresolved_calls?: number;
+  rescheduled?: number;
 };
 
 type PatientRow = {
@@ -28,6 +31,12 @@ type PatientRow = {
 };
 
 type AppointmentRow = {
+  patient_id?: string;
+  service_id?: string;
+  provider_id?: string;
+  source?: string;
+  timezone?: string;
+  end_time?: string;
   id: string;
   status: string;
   start_time: string;
@@ -58,6 +67,8 @@ type StaffRow = {
 };
 
 type CallLogRow = {
+  appointment_id?: string | null;
+  escalation_status?: string | null;
   id: string;
   caller_number?: string | null;
   direction?: string | null;
@@ -142,6 +153,13 @@ export default function DashboardPage() {
   });
   const [analytics, setAnalytics] = useState({ appointment_trends: [0, 0, 0, 0, 0, 0, 0], call_outcomes: { booked: 0, missed: 0, follow_up: 0 } });
   const [patients, setPatients] = useState<PatientRow[]>([]);
+  const [editingAppointment, setEditingAppointment] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [availabilityDate, setAvailabilityDate] = useState('');
+  const [availableSlots, setAvailableSlots] = useState<{start_time: string; end_time: string; provider_id: string; service_id?: string}[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<{start_time: string; end_time: string; provider_id: string; service_id?: string} | null>(null);
+  const [clinicTimezone, setClinicTimezone] = useState('');
+  const [appointmentHistory, setAppointmentHistory] = useState<{action: string; timestamp: string; actor_type: string}[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [services, setServices] = useState<ServiceRow[]>([]);
@@ -180,17 +198,23 @@ export default function DashboardPage() {
     }
 
     const [summaryRes, analyticsRes, patientsRes, appointmentsRes, providersRes, servicesRes, staffRes, callsRes, followUpsRes] = await Promise.all([
-      fetch(`${API_URL}/api/v1/dashboard/summary`),
-      fetch(`${API_URL}/api/v1/dashboard/analytics`),
-      fetch(`${API_URL}/api/v1/patients`),
-      fetch(`${API_URL}/api/v1/appointments`),
-      fetch(`${API_URL}/api/v1/providers`),
-      fetch(`${API_URL}/api/v1/services`),
-      fetch(`${API_URL}/api/v1/staff`),
-      fetch(`${API_URL}/api/v1/operations/calls`),
-      fetch(`${API_URL}/api/v1/operations/follow-ups`),
+      fetch(`${API_URL}/api/v1/dashboard/summary`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/dashboard/analytics`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/patients`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/appointments`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/providers`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/services`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/staff`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/operations/calls`, { headers: getAuthHeaders() }),
+      fetch(`${API_URL}/api/v1/operations/follow-ups`, { headers: getAuthHeaders() }),
     ]);
 
+    const responses = [summaryRes, analyticsRes, patientsRes, appointmentsRes, providersRes, servicesRes, staffRes, callsRes, followUpsRes];
+    if (responses.some((response) => response.status === 401)) {
+      router.push('/login');
+      return;
+    }
+    setLoadError(responses.some((response) => !response.ok) ? 'Some clinic data could not be loaded. Please refresh to retry.' : '');
     if (summaryRes.ok) setSummary(await summaryRes.json());
     if (analyticsRes.ok) setAnalytics(await analyticsRes.json());
     if (patientsRes.ok) {
@@ -243,8 +267,44 @@ export default function DashboardPage() {
   }, [router]);
 
   useEffect(() => {
-    void loadDashboard();
+    void loadDashboard().catch(() => setLoadError('Unable to connect to the clinic system. Please refresh to retry.'));
   }, [loadDashboard]);
+
+  async function checkAvailability() {
+    if (!availabilityDate || !bookingForm.provider_id || !bookingForm.service_id) {
+      setBookingStatus('Select a date, provider and service.');
+      return;
+    }
+    setSelectedSlot(null);
+    setAvailableSlots([]);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/appointments/availability`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({preferred_date: availabilityDate, provider_id: bookingForm.provider_id, service_id: bookingForm.service_id}),
+      });
+      const data = await response.json();
+      if (!response.ok) { setBookingStatus(data.detail ?? 'Availability could not be loaded.'); return; }
+      setAvailableSlots((data.slots ?? []).map((slot: {start_time: string; end_time: string; provider_id: string}) => ({...slot, service_id: bookingForm.service_id})));
+      setClinicTimezone(data.timezone ?? '');
+      setBookingStatus(data.slots?.length ? 'Select an available time.' : 'No available times for this provider and date.');
+    } catch { setBookingStatus('Availability could not be loaded. Please retry.'); }
+  }
+
+  function rescheduleAppointment(appointment: AppointmentRow) {
+    setEditingAppointment(appointment.id);
+    setBookingForm({patient_id: appointment.patient_id ?? '', provider_id: appointment.provider_id ?? '', service_id: appointment.service_id ?? '', start_time: '', notes: ''});
+    setSelectedSlot(null);
+    setAvailableSlots([]);
+    setBookingStatus('Choose and confirm a new time for this appointment.');
+  }
+
+  async function showHistory(id: string) {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/appointments/${id}/history`, {headers: getAuthHeaders()});
+      if (!response.ok) { setBookingStatus('Booking history could not be loaded.'); return; }
+      setAppointmentHistory((await response.json()).items ?? []);
+    } catch { setBookingStatus('Booking history could not be loaded.'); }
+  }
 
   const filteredPatients = useMemo(() => patients.filter((patient) => {
     const term = patientSearch.toLowerCase();
@@ -304,29 +364,35 @@ export default function DashboardPage() {
       return;
     }
 
+    if (selectedSlot && (selectedSlot.provider_id !== bookingForm.provider_id || selectedSlot.service_id !== bookingForm.service_id)) {
+      setBookingStatus('Provider or service changed. Please check availability again.');
+      return;
+    }
     const service = services.find((item) => item.id === bookingForm.service_id);
-    const start = new Date(bookingForm.start_time);
+    const start = new Date(selectedSlot?.start_time ?? bookingForm.start_time);
     const durationMs = ((service?.default_duration_minutes ?? 30) * 60 * 1000);
     const payload = {
       patient_id: bookingForm.patient_id,
       provider_id: bookingForm.provider_id,
       service_id: bookingForm.service_id,
-      start_time: start.toISOString(),
-      end_time: new Date(start.getTime() + durationMs).toISOString(),
-      status: 'scheduled',
-      source: 'dashboard',
+      start_time: selectedSlot?.start_time ?? start.toISOString(),
+      end_time: selectedSlot?.end_time ?? new Date(start.getTime() + durationMs).toISOString(),
+      ...(!editingAppointment ? {status: 'scheduled', source: 'dashboard'} : {}),
       notes: bookingForm.notes,
     };
 
-    const response = await fetch(`${API_URL}/api/v1/appointments`, {
-      method: 'POST',
+    const response = await fetch(`${API_URL}/api/v1/appointments${editingAppointment ? `/${editingAppointment}` : ''}`, {
+      method: editingAppointment ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(payload),
     });
 
     if (response.ok) {
       setBookingForm({ ...defaultBookingForm, provider_id: providers[0]?.id ?? '', service_id: services[0]?.id ?? '' });
-      setBookingStatus('Appointment scheduled successfully.');
+      setBookingStatus(editingAppointment ? 'Appointment rescheduled successfully.' : 'Appointment scheduled successfully.');
+      setEditingAppointment(null);
+      setSelectedSlot(null);
+      setAvailableSlots([]);
       await loadDashboard();
     } else {
       const error = await response.json();
@@ -623,12 +689,13 @@ export default function DashboardPage() {
                   <h2 className="mb-4 text-xl font-semibold">Recent appointments</h2>
                   <div className="space-y-3">
                     {filteredAppointments.slice(0, 6).map((appointment) => (
-                      <div key={appointment.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
+                      <div key={appointment.id} data-testid={`appointment-${appointment.id}`} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
                         <div>
-                          <div>{new Date(appointment.start_time).toLocaleString()}</div>
+                          <div>{new Date(appointment.start_time).toLocaleString([], {timeZone: appointment.timezone})} {appointment.timezone}</div>
+                        <div className="text-xs">{providers.find((p) => p.id === appointment.provider_id)?.name ?? 'Provider unavailable'} · {appointment.source ?? 'Unknown source'}</div>
                           <div className="mt-1 inline-block rounded-full bg-cyan-50 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-600">{appointment.status}</div>
                         </div>
-                        <button type="button" onClick={() => handleUpdateAppointment(appointment.id, 'confirmed')} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white">Confirm</button>
+                        <button type="button" disabled={appointment.status !== 'scheduled'} onClick={() => handleUpdateAppointment(appointment.id, 'confirmed')} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed">Confirm</button>
                       </div>
                     ))}
                   </div>
@@ -643,7 +710,9 @@ export default function DashboardPage() {
                           <span className="font-semibold text-slate-900">{call.caller_number ?? 'Unknown caller'}</span>
                           <span className="rounded-full bg-cyan-50 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-600">{call.outcome ?? call.status ?? 'new'}</span>
                         </div>
-                        <div className="mt-1">{call.summary ?? 'No summary available.'}</div>
+                        {call.appointment_id && <div className="mt-1 text-xs">Appointment: {call.appointment_id}</div>}
+                    {call.escalation_status && <div className="mt-1 font-medium">Human assistance: {call.escalation_status}</div>}
+                    <div className="mt-1">{call.summary ?? 'No summary available.'}</div>
                       </div>
                     ))}
                   </div>
@@ -652,6 +721,7 @@ export default function DashboardPage() {
             </>
           )}
 
+          {loadError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-rose-700">{loadError}</p>}
           {activeSection === 'patients' && (
             <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
               <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -708,25 +778,33 @@ export default function DashboardPage() {
           {activeSection === 'appointments' && (
             <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
               <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <h2 className="mb-4 text-xl font-semibold">Schedule visit</h2>
+                <h2 className="mb-4 text-xl font-semibold">{editingAppointment ? 'Reschedule visit' : 'Schedule visit'}</h2>
                 <form className="space-y-3" onSubmit={handleCreateAppointment}>
                   <select value={bookingForm.patient_id} onChange={(event) => setBookingForm({ ...bookingForm, patient_id: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
                     <option value="">Select patient</option>
                     {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.first_name} {patient.last_name}</option>)}
                   </select>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <select value={bookingForm.provider_id} onChange={(event) => setBookingForm({ ...bookingForm, provider_id: event.target.value })} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
+                    <select value={bookingForm.provider_id} onChange={(event) => {setSelectedSlot(null); setAvailableSlots([]); setBookingForm({ ...bookingForm, provider_id: event.target.value });}} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
                       <option value="">Select provider</option>
                       {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
                     </select>
-                    <select value={bookingForm.service_id} onChange={(event) => setBookingForm({ ...bookingForm, service_id: event.target.value })} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
+                    <select value={bookingForm.service_id} onChange={(event) => {setSelectedSlot(null); setAvailableSlots([]); setBookingForm({ ...bookingForm, service_id: event.target.value });}} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
                       <option value="">Select service</option>
                       {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
                     </select>
                   </div>
-                  <input type="datetime-local" value={bookingForm.start_time} onChange={(event) => setBookingForm({ ...bookingForm, start_time: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
+                  <label className="block text-sm">Check clinic availability
+                    <input aria-label="Appointment date" type="date" value={availabilityDate} onChange={(event) => {setAvailabilityDate(event.target.value); setSelectedSlot(null); setAvailableSlots([]);}} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+                  </label>
+                  <button type="button" onClick={checkAvailability} className="rounded-xl bg-cyan-700 px-4 py-2 text-white">Check availability</button>
+                  {clinicTimezone && <p className="text-sm">Clinic timezone: {clinicTimezone}</p>}
+                  <div className="flex flex-wrap gap-2">{availableSlots.map((slot) => <button type="button" key={slot.start_time} aria-pressed={selectedSlot?.start_time === slot.start_time} onClick={() => {setSelectedSlot(slot); setBookingForm({...bookingForm, start_time: new Date(new Date(slot.start_time).getTime() - new Date(slot.start_time).getTimezoneOffset()*60000).toISOString().slice(0,16)});}} className={`rounded-lg border px-3 py-2 text-sm ${selectedSlot?.start_time === slot.start_time ? 'bg-cyan-700 text-white' : 'bg-slate-50'}`}>{new Date(slot.start_time).toLocaleTimeString([], {timeZone: clinicTimezone || undefined, hour: '2-digit', minute: '2-digit'})} ({slot.start_time.slice(-6)})</button>)}</div>
+                  <label className="block text-sm">Manual time (your device timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone})</label>
+                  <input aria-label="Manual appointment time" type="datetime-local" value={bookingForm.start_time} onChange={(event) => {setSelectedSlot(null); setBookingForm({ ...bookingForm, start_time: event.target.value });}} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
                   <textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} placeholder="Visit notes" rows={3} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                  <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white">Book appointment</button>
+                  <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white">{editingAppointment ? 'Save reschedule' : 'Book appointment'}</button>
+                  {editingAppointment && <button type="button" onClick={() => {setEditingAppointment(null); setBookingForm(defaultBookingForm); setSelectedSlot(null);}}>Cancel editing</button>}
                   {bookingStatus ? <p className="text-sm text-slate-600">{bookingStatus}</p> : null}
                 </form>
               </div>
@@ -737,15 +815,20 @@ export default function DashboardPage() {
                   <input value={appointmentSearch} onChange={(event) => setAppointmentSearch(event.target.value)} placeholder="Search status/date" className="w-52 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none" />
                 </div>
                 <div className="space-y-3">
+                  {filteredAppointments.length === 0 && <p>No appointments match the current filter.</p>}
+                  {appointmentHistory.length > 0 && <div aria-live="polite" className="rounded-xl border p-3 text-sm"><button type="button" onClick={() => setAppointmentHistory([])}>Close history</button>{appointmentHistory.map((entry, i) => <p key={i}>{entry.action} · {entry.actor_type} · {new Date(entry.timestamp).toLocaleString()}</p>)}</div>}
                   {filteredAppointments.map((appointment) => (
-                    <div key={appointment.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
+                    <div key={appointment.id} data-testid={`appointment-${appointment.id}`} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
                       <div>
-                        <div>{new Date(appointment.start_time).toLocaleString()}</div>
+                        <div>{new Date(appointment.start_time).toLocaleString([], {timeZone: appointment.timezone})} {appointment.timezone}</div>
+                        <div className="text-xs">{providers.find((p) => p.id === appointment.provider_id)?.name ?? 'Provider unavailable'} · {appointment.source ?? 'Unknown source'}</div>
                         <div className="mt-1 inline-block rounded-full bg-cyan-50 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-600">{appointment.status}</div>
                       </div>
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => handleUpdateAppointment(appointment.id, 'confirmed')} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white">Confirm</button>
-                        <button type="button" onClick={() => handleDeleteAppointment(appointment.id)} className="rounded-xl bg-rose-600 px-3 py-2 text-xs font-medium text-white">Cancel</button>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" disabled={['completed','cancelled','no_show'].includes(appointment.status)} onClick={() => rescheduleAppointment(appointment)} className="rounded-xl border px-3 py-2 text-xs disabled:opacity-40 disabled:cursor-not-allowed">Reschedule</button>
+                        <button type="button" onClick={() => showHistory(appointment.id)} className="rounded-xl border px-3 py-2 text-xs">History</button>
+                        <button type="button" disabled={appointment.status !== 'scheduled'} onClick={() => handleUpdateAppointment(appointment.id, 'confirmed')} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed">Confirm</button>
+                        <button type="button" disabled={['completed', 'cancelled', 'no_show'].includes(appointment.status)} onClick={() => handleDeleteAppointment(appointment.id)} className="rounded-xl bg-rose-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed">Cancel</button>
                       </div>
                     </div>
                   ))}
@@ -846,13 +929,17 @@ export default function DashboardPage() {
           {activeSection === 'calls' && (
             <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
               <h2 className="mb-4 text-xl font-semibold">Call center log</h2>
+              <p className="mb-4 text-sm">AI bookings: {summary.ai_bookings ?? 0} · Unresolved calls: {summary.unresolved_calls ?? 0} · Rescheduled: {summary.rescheduled ?? 0}</p>
               <div className="space-y-3">
+                {calls.length === 0 && <p>No call records yet.</p>}
                 {calls.map((call) => (
                   <div key={call.id} className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
                     <div className="flex items-center justify-between gap-3">
                       <div className="font-semibold text-slate-900">{call.caller_number ?? 'Unknown caller'}</div>
-                      <span className="rounded-full bg-cyan-50 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-600">{call.outcome ?? call.status}</span>
+                      <span className="rounded-full bg-cyan-50 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-600">{call.status ?? 'Unknown status'} · {call.outcome ?? 'Outcome pending'}</span>
                     </div>
+                    {call.appointment_id && <div className="mt-1 text-xs">Appointment: {call.appointment_id}</div>}
+                    {call.escalation_status && <div className="mt-1 font-medium">Human assistance: {call.escalation_status}</div>}
                     <div className="mt-1">{call.summary ?? 'No summary available.'}</div>
                   </div>
                 ))}
