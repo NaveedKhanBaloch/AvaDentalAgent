@@ -1,12 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
-from app.api.v1.routes.staff import require_permission
 from app.db.session import get_db
-from app.models.models import Appointment, ClinicBusinessHours, DentalService, Patient, Provider
+from app.models.models import Appointment, Patient
 from app.schemas.appointment import (
     AppointmentCreate,
     AppointmentStatusUpdate,
@@ -14,6 +13,17 @@ from app.schemas.appointment import (
     AvailabilityRequest,
     AvailabilityResponse,
     Slot,
+)
+from app.services.scheduling import (
+    InvalidStatusTransitionError,
+    SchedulingConflictError,
+    ScheduleValidationError,
+    available_slots_for_day,
+    ensure_no_overlap,
+    get_provider_clinic_lock,
+    normalize_status,
+    resolve_provider_and_service,
+    validate_status_transition,
 )
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -23,60 +33,34 @@ router = APIRouter(prefix="/appointments", tags=["appointments"])
 def get_availability(payload: AvailabilityRequest, db: Session = Depends(get_db)) -> AvailabilityResponse:
     preferred_date = datetime.fromisoformat(payload.preferred_date)
     _, clinic = get_default_tenant_and_clinic(db)
-    existing = db.query(Appointment).filter(
-        Appointment.clinic_id == clinic.id,
-        Appointment.start_time >= preferred_date.replace(hour=0, minute=0, second=0, microsecond=0),
-        Appointment.start_time < preferred_date.replace(hour=23, minute=59, second=59, microsecond=999999),
-    ).all()
 
-    business_hours = db.query(ClinicBusinessHours).filter(
-        ClinicBusinessHours.clinic_id == clinic.id,
-        ClinicBusinessHours.weekday == preferred_date.weekday(),
-    ).first()
-
-    if business_hours is None or business_hours.is_closed:
-        return AvailabilityResponse(
-            success=True,
-            status="unavailable",
-            slots=[],
-            message="The clinic is closed on this date.",
+    try:
+        slots = available_slots_for_day(
+            db,
+            clinic,
+            preferred_date,
+            provider_id=payload.provider_id,
+            service_id=payload.service_id,
+            time_preference=payload.time_preference,
         )
+    except ScheduleValidationError as exc:
+        return AvailabilityResponse(success=True, status="unavailable", slots=[], message=str(exc))
 
-    start = preferred_date.replace(hour=int(business_hours.opening_time.split(":")[0]), minute=int(business_hours.opening_time.split(":")[1]), second=0, microsecond=0)
-    end = preferred_date.replace(hour=int(business_hours.closing_time.split(":")[0]), minute=int(business_hours.closing_time.split(":")[1]), second=0, microsecond=0)
-
-    preferred = (payload.time_preference or "morning").lower()
-    time_windows: list[tuple[datetime, datetime]] = []
-    current = start
-    while current + timedelta(minutes=30) <= end:
-        next_time = current + timedelta(minutes=30)
-        occupied = any(current < appt.end_time and appt.start_time < next_time for appt in existing)
-        if not occupied:
-            time_windows.append((current, next_time))
-        current = next_time
-
-    if preferred == "morning":
-        time_windows = [window for window in time_windows if window[0].hour < 12]
-    elif preferred == "afternoon":
-        time_windows = [window for window in time_windows if window[0].hour >= 12]
-    elif preferred == "evening":
-        time_windows = [window for window in time_windows if window[0].hour >= 17]
-
-    slots = [
+    items = [
         Slot(
-            slot_id=f"slot-{start_value.strftime('%Y%m%d-%H%M')}",
-            start_time=start_value,
-            end_time=end_value,
-            provider_id=payload.provider_id or "provider-demo",
+            slot_id=f"slot-{slot['start_time'].strftime('%Y%m%d-%H%M')}",
+            start_time=slot["start_time"],
+            end_time=slot["end_time"],
+            provider_id=slot.get("provider_id"),
         )
-        for start_value, end_value in time_windows[:8]
+        for slot in slots
     ]
 
     return AvailabilityResponse(
         success=True,
-        status="available" if slots else "unavailable",
-        slots=slots,
-        message="Appointment slots found." if slots else "No appointment slots are available for this date.",
+        status="available" if items else "unavailable",
+        slots=items,
+        message="Appointment slots found." if items else "No appointment slots are available for this date.",
     )
 
 
@@ -105,6 +89,26 @@ def update_appointment(
     if not appointment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
 
+    if payload.status is not None:
+        try:
+            validate_status_transition(appointment.status, payload.status)
+        except InvalidStatusTransitionError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    provider_id = payload.provider_id or appointment.provider_id
+    start_time = payload.start_time or appointment.start_time
+    end_time = payload.end_time or appointment.end_time
+
+    if start_time >= end_time:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Appointment end time must be after the start time.")
+
+    if payload.provider_id is not None or payload.start_time is not None or payload.end_time is not None:
+        try:
+            get_provider_clinic_lock(db, provider_id)
+            ensure_no_overlap(db, appointment.clinic_id, provider_id, start_time, end_time, exclude_id=appointment.id)
+        except (ScheduleValidationError, SchedulingConflictError) as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT if isinstance(exc, SchedulingConflictError) else status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     if payload.provider_id is not None:
         appointment.provider_id = payload.provider_id
     if payload.service_id is not None:
@@ -116,28 +120,7 @@ def update_appointment(
     if payload.notes is not None:
         appointment.notes = payload.notes
     if payload.status is not None:
-        valid_statuses = {"scheduled", "confirmed", "checked_in", "completed", "cancelled"}
-        normalized_status = payload.status.lower()
-        if normalized_status not in valid_statuses:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment status.")
-        appointment.status = normalized_status
-
-    if appointment.start_time >= appointment.end_time:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Appointment end time must be after the start time.")
-
-    overlap = db.query(Appointment).filter(
-        Appointment.clinic_id == appointment.clinic_id,
-        Appointment.provider_id == appointment.provider_id,
-        Appointment.id != appointment_id,
-        Appointment.status != "cancelled",
-        Appointment.start_time < appointment.end_time,
-        Appointment.end_time > appointment.start_time,
-    ).first()
-    if overlap:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Appointment overlaps with an existing provider schedule.",
-        )
+        appointment.status = normalize_status(payload.status)
 
     db.commit()
     db.refresh(appointment)
@@ -160,12 +143,12 @@ def update_appointment_status(
     if not appointment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
 
-    valid_statuses = {"scheduled", "confirmed", "checked_in", "completed", "cancelled"}
-    normalized_status = payload.status.lower()
-    if normalized_status not in valid_statuses:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment status.")
+    try:
+        validate_status_transition(appointment.status, payload.status)
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    appointment.status = normalized_status
+    appointment.status = normalize_status(payload.status)
     if payload.notes is not None:
         appointment.notes = payload.notes
     db.commit()
@@ -181,6 +164,9 @@ def delete_appointment(
     appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
     if not appointment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+
+    if appointment.status == "cancelled":
+        return {"id": appointment.id, "status": appointment.status, "notes": appointment.notes, "message": "Appointment already cancelled."}
 
     appointment.status = "cancelled"
     if appointment.notes is None:
@@ -200,31 +186,22 @@ def create_appointment(
     if not patient:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
-    provider_id = payload.provider_id or db.query(Provider).filter(Provider.clinic_id == clinic.id).first().id
-    service_id = payload.service_id or db.query(DentalService).filter(DentalService.clinic_id == clinic.id).first().id
-
-    overlap = db.query(Appointment).filter(
-        Appointment.clinic_id == clinic.id,
-        Appointment.provider_id == provider_id,
-        Appointment.status != "cancelled",
-        Appointment.start_time < payload.end_time,
-        Appointment.end_time > payload.start_time,
-    ).first()
-    if overlap:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Appointment overlaps with an existing provider schedule.",
-        )
+    try:
+        provider, service = resolve_provider_and_service(db, clinic, payload.provider_id, payload.service_id)
+        get_provider_clinic_lock(db, provider.id)
+        ensure_no_overlap(db, clinic.id, provider.id, payload.start_time, payload.end_time)
+    except (ScheduleValidationError, SchedulingConflictError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT if isinstance(exc, SchedulingConflictError) else status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     appointment = Appointment(
         tenant_id=patient.tenant_id,
         clinic_id=clinic.id,
         patient_id=patient.id,
-        provider_id=provider_id,
-        service_id=service_id,
+        provider_id=provider.id,
+        service_id=service.id,
         start_time=payload.start_time,
         end_time=payload.end_time,
-        status=payload.status,
+        status=normalize_status(payload.status),
         source=payload.source,
         notes=payload.notes,
     )
