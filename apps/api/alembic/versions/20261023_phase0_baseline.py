@@ -20,7 +20,7 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    for table in reversed(Base.metadata.sorted_tables):
+    for table in Base.metadata.sorted_tables:
         if not bind.dialect.has_table(bind, table.name):
             table.create(bind=bind)
 

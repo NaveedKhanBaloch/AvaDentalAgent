@@ -1,31 +1,18 @@
 from collections.abc import Generator
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-
 from app.core.config import get_settings
 
 settings = get_settings()
-
-
-def _build_engine():
-    try:
-        engine = create_engine(settings.database_url, pool_pre_ping=True)
-        with engine.connect() as connection:
-            connection.execute("SELECT 1")
-        return engine
-    except Exception:
-        sqlite_url = "sqlite:///./dentalvoice_dev.db"
-        return create_engine(sqlite_url, connect_args={"check_same_thread": False})
-
-
-engine = _build_engine()
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-
+# Never silently switch databases when PostgreSQL is unavailable.
+options = {"connect_args": {"check_same_thread": False}} if settings.database_url.startswith("sqlite") else {"pool_size": 10, "max_overflow": 10, "connect_args": {"connect_timeout": 5}}
+engine = create_engine(settings.database_url, pool_pre_ping=True, **options)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with SessionLocal() as db:
+        try:
+            yield db
+        except Exception:
+            db.rollback()
+            raise

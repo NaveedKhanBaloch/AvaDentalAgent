@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, status
+from contextvars import ContextVar
+from app.core.config import get_settings
+
+request_user: ContextVar = ContextVar("request_user", default=None)
 from sqlalchemy.orm import Session
 
 from app.api.v1.routes.auth import get_optional_current_user
@@ -33,13 +37,17 @@ def get_user_membership(db: Session, user_id: str) -> Membership | None:
 
 
 def get_user_default_clinic(db: Session, user: User | None = None) -> tuple[Tenant, Clinic]:
+    user = user or request_user.get()
     if user is not None:
         membership = get_user_membership(db, user.id)
         if membership is not None:
             tenant = db.query(Tenant).filter(Tenant.id == membership.tenant_id).first()
             clinic = db.query(Clinic).filter(Clinic.id == membership.clinic_id).first()
-            if tenant and clinic:
+            if tenant and clinic and clinic.tenant_id == tenant.id and clinic.status == "active":
                 return tenant, clinic
+
+    if user is not None or get_settings().app_env == "production" or get_settings().strict_auth_mode:
+        raise HTTPException(status_code=403, detail="An active clinic membership is required.")
 
     tenant = db.query(Tenant).filter(Tenant.slug == "harbor-dental-demo").first()
     if tenant is None:
@@ -70,6 +78,8 @@ def get_user_default_clinic(db: Session, user: User | None = None) -> tuple[Tena
 def require_permission(permission: str):
     def dependency(current_user: User | None = Depends(get_optional_current_user), db: Session = Depends(get_db)):
         if current_user is None:
+            if get_settings().app_env == "production" or get_settings().strict_auth_mode:
+                raise HTTPException(status_code=401, detail="Authentication required")
             return None
 
         membership = get_user_membership(db, current_user.id)
@@ -88,3 +98,13 @@ def require_permission(permission: str):
         return current_user
 
     return dependency
+
+
+async def bind_request_user(current_user: User | None = Depends(get_optional_current_user)):
+    if current_user is None and (get_settings().app_env == "production" or get_settings().strict_auth_mode):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = request_user.set(current_user)
+    try:
+        yield
+    finally:
+        request_user.reset(token)

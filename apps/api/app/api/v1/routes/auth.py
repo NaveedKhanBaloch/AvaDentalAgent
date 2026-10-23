@@ -17,7 +17,7 @@ settings = get_settings()
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     normalized_email = payload.email.lower().strip()
     user = db.query(User).filter(User.email == normalized_email).first()
-    if user is None and normalized_email == settings.demo_admin_email.lower():
+    if user is None and settings.app_env != "production" and settings.demo_seed_enabled and normalized_email == settings.demo_admin_email.lower():
         user = User(
             email=normalized_email,
             password_hash=hash_password(settings.demo_admin_password),
@@ -28,7 +28,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
         db.commit()
         db.refresh(user)
 
-    if not user or not verify_password(payload.password, user.password_hash):
+    if not user or user.status != "active" or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     token = create_access_token(user.id)
     return TokenResponse(access_token=token)
@@ -41,7 +41,7 @@ def get_current_user(token: str = Depends(security), db: Session = Depends(get_d
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials") from exc
 
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if not user or user.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 
@@ -55,7 +55,7 @@ def get_optional_current_user(token: str | None = Depends(OAuth2PasswordBearer(t
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials") from exc
 
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if not user or user.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 

@@ -1,211 +1,112 @@
 from datetime import datetime
-
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
+from app.core.authorization import require_permission, request_user
 from app.db.session import get_db
-from app.models.models import Appointment, Patient
-from app.schemas.appointment import (
-    AppointmentCreate,
-    AppointmentStatusUpdate,
-    AppointmentUpdate,
-    AvailabilityRequest,
-    AvailabilityResponse,
-    Slot,
-)
-from app.services.scheduling import (
-    InvalidStatusTransitionError,
-    SchedulingConflictError,
-    ScheduleValidationError,
-    available_slots_for_day,
-    ensure_no_overlap,
-    get_provider_clinic_lock,
-    normalize_status,
-    resolve_provider_and_service,
-    validate_status_transition,
-)
+from app.models.models import Appointment, AuditLog, Patient
+from app.schemas.appointment import AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate, AvailabilityRequest
+from app.services.scheduling import (available_slots_for_day, save_appointment, ScheduleValidationError,
+    SchedulingConflictError, InvalidStatusTransitionError, stored_datetime)
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 
-@router.post("/availability", response_model=AvailabilityResponse)
-def get_availability(payload: AvailabilityRequest, db: Session = Depends(get_db)) -> AvailabilityResponse:
-    preferred_date = datetime.fromisoformat(payload.preferred_date)
+def scoped_appointment(db, appointment_id):
     _, clinic = get_default_tenant_and_clinic(db)
+    appointment = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.clinic_id == clinic.id).first()
+    if appointment is None:
+        raise HTTPException(404, "Appointment not found")
+    return clinic, appointment
 
+
+def serialize(a, clinic):
+    return {"id": a.id, "appointment_id": a.id, "patient_id": a.patient_id, "provider_id": a.provider_id,
+            "service_id": a.service_id, "status": a.status, "source": a.source,
+            "start_time": stored_datetime(a.start_time).isoformat(), "end_time": stored_datetime(a.end_time).isoformat(),
+            "timezone": clinic.timezone, "notes": a.notes}
+
+
+def persist(db, clinic, patient, data, appointment=None):
     try:
-        slots = available_slots_for_day(
-            db,
-            clinic,
-            preferred_date,
-            provider_id=payload.provider_id,
-            service_id=payload.service_id,
-            time_preference=payload.time_preference,
-        )
-    except ScheduleValidationError as exc:
-        return AvailabilityResponse(success=True, status="unavailable", slots=[], message=str(exc))
+        user = request_user.get()
+        a = save_appointment(db, clinic, patient, data, actor_id=user.id if user else None, appointment=appointment)
+        db.commit()
+        return a
+    except (SchedulingConflictError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(409, "Appointment overlaps with an existing provider schedule.") from exc
+    except (ScheduleValidationError, InvalidStatusTransitionError) as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc)) from exc
 
-    items = [
-        Slot(
-            slot_id=f"slot-{slot['start_time'].strftime('%Y%m%d-%H%M')}",
-            start_time=slot["start_time"],
-            end_time=slot["end_time"],
-            provider_id=slot.get("provider_id"),
-        )
-        for slot in slots
-    ]
 
-    return AvailabilityResponse(
-        success=True,
-        status="available" if items else "unavailable",
-        slots=items,
-        message="Appointment slots found." if items else "No appointment slots are available for this date.",
-    )
+@router.post("/availability")
+def get_availability(payload: AvailabilityRequest, db: Session = Depends(get_db)):
+    _, clinic = get_default_tenant_and_clinic(db)
+    if payload.clinic_id and payload.clinic_id != clinic.id:
+        raise HTTPException(403, "Clinic context mismatch")
+    try:
+        slots = available_slots_for_day(db, clinic, datetime.fromisoformat(payload.preferred_date), payload.provider_id,
+                                        payload.service_id, payload.time_preference)
+    except (ValueError, ScheduleValidationError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"success": True, "status": "available" if slots else "unavailable", "timezone": clinic.timezone,
+            "slots": [dict(s, slot_id=f"{s['provider_id']}:{s['start_time'].isoformat()}") for s in slots],
+            "message": "Appointment slots found." if slots else "No appointment slots are available for this date."}
 
 
 @router.get("")
-def list_appointments(db: Session = Depends(get_db)) -> dict[str, list]:
+def list_appointments(db: Session = Depends(get_db)):
     _, clinic = get_default_tenant_and_clinic(db)
-    appointments = db.query(Appointment).filter(Appointment.clinic_id == clinic.id).order_by(Appointment.start_time.desc()).limit(10).all()
-    return {"items": [{"id": a.id, "status": a.status, "start_time": a.start_time.isoformat()} for a in appointments]}
+    items = db.query(Appointment).filter(Appointment.clinic_id == clinic.id).order_by(Appointment.start_time.desc()).limit(100).all()
+    return {"items": [serialize(a, clinic) for a in items]}
 
 
 @router.get("/{appointment_id}")
-def get_appointment(appointment_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
-    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-    if not appointment:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
-    return {"id": appointment.id, "status": appointment.status}
+def get_appointment(appointment_id: str, db: Session = Depends(get_db)):
+    clinic, appointment = scoped_appointment(db, appointment_id)
+    return serialize(appointment, clinic)
 
 
-@router.patch("/{appointment_id}")
-def update_appointment(
-    appointment_id: str,
-    payload: AppointmentUpdate,
-    db: Session = Depends(get_db),
-) -> dict:
-    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-    if not appointment:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
-
-    if payload.status is not None:
-        try:
-            validate_status_transition(appointment.status, payload.status)
-        except InvalidStatusTransitionError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    provider_id = payload.provider_id or appointment.provider_id
-    start_time = payload.start_time or appointment.start_time
-    end_time = payload.end_time or appointment.end_time
-
-    if start_time >= end_time:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Appointment end time must be after the start time.")
-
-    if payload.provider_id is not None or payload.start_time is not None or payload.end_time is not None:
-        try:
-            get_provider_clinic_lock(db, provider_id)
-            ensure_no_overlap(db, appointment.clinic_id, provider_id, start_time, end_time, exclude_id=appointment.id)
-        except (ScheduleValidationError, SchedulingConflictError) as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT if isinstance(exc, SchedulingConflictError) else status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    if payload.provider_id is not None:
-        appointment.provider_id = payload.provider_id
-    if payload.service_id is not None:
-        appointment.service_id = payload.service_id
-    if payload.start_time is not None:
-        appointment.start_time = payload.start_time
-    if payload.end_time is not None:
-        appointment.end_time = payload.end_time
-    if payload.notes is not None:
-        appointment.notes = payload.notes
-    if payload.status is not None:
-        appointment.status = normalize_status(payload.status)
-
-    db.commit()
-    db.refresh(appointment)
-    return {
-        "id": appointment.id,
-        "status": appointment.status,
-        "start_time": appointment.start_time.isoformat(),
-        "end_time": appointment.end_time.isoformat(),
-        "notes": appointment.notes,
-    }
+@router.get("/{appointment_id}/history")
+def appointment_history(appointment_id: str, db: Session = Depends(get_db)):
+    clinic, _ = scoped_appointment(db, appointment_id)
+    items = db.query(AuditLog).filter(AuditLog.tenant_id == clinic.tenant_id, AuditLog.entity_type == "appointment",
+        AuditLog.entity_id == appointment_id).order_by(AuditLog.timestamp).all()
+    return {"items": [{"action": a.action, "actor_type": a.actor_type, "actor_id": a.actor_id,
+        "timestamp": a.timestamp.isoformat(), "changes": json.loads(a.audit_metadata or "{}")} for a in items]}
 
 
-@router.patch("/{appointment_id}/status")
-def update_appointment_status(
-    appointment_id: str,
-    payload: AppointmentStatusUpdate,
-    db: Session = Depends(get_db),
-) -> dict:
-    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-    if not appointment:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
-
-    try:
-        validate_status_transition(appointment.status, payload.status)
-    except InvalidStatusTransitionError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    appointment.status = normalize_status(payload.status)
-    if payload.notes is not None:
-        appointment.notes = payload.notes
-    db.commit()
-    db.refresh(appointment)
-    return {"id": appointment.id, "status": appointment.status, "notes": appointment.notes}
-
-
-@router.delete("/{appointment_id}")
-def delete_appointment(
-    appointment_id: str,
-    db: Session = Depends(get_db),
-) -> dict:
-    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-    if not appointment:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
-
-    if appointment.status == "cancelled":
-        return {"id": appointment.id, "status": appointment.status, "notes": appointment.notes, "message": "Appointment already cancelled."}
-
-    appointment.status = "cancelled"
-    if appointment.notes is None:
-        appointment.notes = "Cancelled by front desk."
-    db.commit()
-    db.refresh(appointment)
-    return {"id": appointment.id, "status": appointment.status, "notes": appointment.notes, "message": "Appointment cancelled."}
-
-
-@router.post("", status_code=status.HTTP_201_CREATED)
-def create_appointment(
-    payload: AppointmentCreate,
-    db: Session = Depends(get_db),
-) -> dict[str, str]:
+@router.post("", status_code=201, dependencies=[Depends(require_permission("create_appointments"))])
+def create_appointment(payload: AppointmentCreate, db: Session = Depends(get_db)):
     _, clinic = get_default_tenant_and_clinic(db)
-    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
+    patient = db.query(Patient).filter(Patient.id == payload.patient_id, Patient.clinic_id == clinic.id).first()
     if not patient:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        raise HTTPException(404, "Patient not found")
+    a = persist(db, clinic, patient, payload.model_dump())
+    return {"status": "created", "appointment_id": a.id}
 
-    try:
-        provider, service = resolve_provider_and_service(db, clinic, payload.provider_id, payload.service_id)
-        get_provider_clinic_lock(db, provider.id)
-        ensure_no_overlap(db, clinic.id, provider.id, payload.start_time, payload.end_time)
-    except (ScheduleValidationError, SchedulingConflictError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT if isinstance(exc, SchedulingConflictError) else status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    appointment = Appointment(
-        tenant_id=patient.tenant_id,
-        clinic_id=clinic.id,
-        patient_id=patient.id,
-        provider_id=provider.id,
-        service_id=service.id,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
-        status=normalize_status(payload.status),
-        source=payload.source,
-        notes=payload.notes,
-    )
-    db.add(appointment)
-    db.commit()
-    db.refresh(appointment)
-    return {"status": "created", "appointment_id": appointment.id}
+@router.patch("/{appointment_id}", dependencies=[Depends(require_permission("update_appointments"))])
+def update_appointment(appointment_id: str, payload: AppointmentUpdate, db: Session = Depends(get_db)):
+    clinic, a = scoped_appointment(db, appointment_id)
+    patient = db.get(Patient, a.patient_id)
+    a = persist(db, clinic, patient, payload.model_dump(exclude_unset=True, exclude_none=True), a)
+    return serialize(a, clinic)
+
+
+@router.patch("/{appointment_id}/status", dependencies=[Depends(require_permission("update_appointments"))])
+def update_appointment_status(appointment_id: str, payload: AppointmentStatusUpdate, db: Session = Depends(get_db)):
+    clinic, a = scoped_appointment(db, appointment_id)
+    a = persist(db, clinic, db.get(Patient, a.patient_id), payload.model_dump(exclude_none=True), a)
+    return serialize(a, clinic)
+
+
+@router.delete("/{appointment_id}", dependencies=[Depends(require_permission("update_appointments"))])
+def delete_appointment(appointment_id: str, db: Session = Depends(get_db)):
+    clinic, a = scoped_appointment(db, appointment_id)
+    a = persist(db, clinic, db.get(Patient, a.patient_id), {"status": "cancelled"}, a)
+    return dict(serialize(a, clinic), message="Appointment cancelled.")

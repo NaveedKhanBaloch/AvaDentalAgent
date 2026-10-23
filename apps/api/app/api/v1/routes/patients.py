@@ -96,7 +96,8 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> dic
 
 @router.get("/{patient_id}")
 def get_patient(patient_id: str, db: Session = Depends(get_db)) -> dict:
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    _, active_clinic = get_default_tenant_and_clinic(db)
+    patient = db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == active_clinic.id).first()
     if not patient:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
     return {
@@ -114,7 +115,8 @@ def get_patient(patient_id: str, db: Session = Depends(get_db)) -> dict:
 
 @router.patch("/{patient_id}")
 def update_patient(patient_id: str, payload: PatientUpdate, db: Session = Depends(get_db)) -> dict:
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    _, active_clinic = get_default_tenant_and_clinic(db)
+    patient = db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == active_clinic.id).first()
     if not patient:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
@@ -147,7 +149,8 @@ def update_patient(patient_id: str, payload: PatientUpdate, db: Session = Depend
 
 @router.delete("/{patient_id}")
 def delete_patient(patient_id: str, db: Session = Depends(get_db)) -> dict:
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    _, active_clinic = get_default_tenant_and_clinic(db)
+    patient = db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == active_clinic.id).first()
     if not patient:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
@@ -168,7 +171,8 @@ def delete_patient(patient_id: str, db: Session = Depends(get_db)) -> dict:
 
 @router.get("/{patient_id}/insurance")
 def get_patient_insurance(patient_id: str, db: Session = Depends(get_db)) -> dict[str, list[dict]]:
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    _, active_clinic = get_default_tenant_and_clinic(db)
+    patient = db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == active_clinic.id).first()
     if not patient:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
@@ -198,7 +202,8 @@ def create_patient_insurance(
     payload: InsuranceCreate,
     db: Session = Depends(get_db),
 ) -> dict:
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    _, active_clinic = get_default_tenant_and_clinic(db)
+    patient = db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == active_clinic.id).first()
     if not patient:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 

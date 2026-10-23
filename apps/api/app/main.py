@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from app.core.authorization import bind_request_user
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.routes.auth import router as auth_router
@@ -35,26 +36,15 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def startup() -> None:
-    try:
-        if settings.app_env != "production":
-            Base.metadata.create_all(bind=engine)
-            if settings.demo_seed_enabled:
-                seed_demo_data()
-    except Exception:  # pragma: no cover - defensive startup guard
-        pass
-
-
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
-app.include_router(catalog_router, prefix="/api/v1")
-app.include_router(operations_router, prefix="/api/v1")
-app.include_router(patients_router, prefix="/api/v1")
-app.include_router(scheduler_router, prefix="/api/v1")
-app.include_router(staff_router, prefix="/api/v1")
-app.include_router(dashboard_router, prefix="/api/v1")
+app.include_router(catalog_router, prefix="/api/v1", dependencies=[Depends(bind_request_user)])
+app.include_router(operations_router, prefix="/api/v1", dependencies=[Depends(bind_request_user)])
+app.include_router(patients_router, prefix="/api/v1", dependencies=[Depends(bind_request_user)])
+app.include_router(scheduler_router, prefix="/api/v1", dependencies=[Depends(bind_request_user)])
+app.include_router(staff_router, prefix="/api/v1", dependencies=[Depends(bind_request_user)])
+app.include_router(dashboard_router, prefix="/api/v1", dependencies=[Depends(bind_request_user)])
 app.include_router(retell_router, prefix="/api/v1")
 
 

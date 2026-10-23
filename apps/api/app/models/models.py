@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import UniqueConstraint, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -180,6 +180,12 @@ class RetellIntegration(Base):
 
 class CallLog(Base):
     __tablename__ = "call_logs"
+    __table_args__ = (UniqueConstraint("clinic_id", "external_call_id", name="uq_call_clinic_external"),)
+    patient_id: Mapped[str | None] = mapped_column(ForeignKey("patients.id"), default=None)
+    appointment_id: Mapped[str | None] = mapped_column(ForeignKey("appointments.id"), default=None)
+    escalation_status: Mapped[str | None] = mapped_column(String(40), default=None)
+    event_rank: Mapped[int] = mapped_column(Integer, default=0)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
@@ -251,3 +257,18 @@ class IdempotencyRecord(Base):
     request_hash: Mapped[str | None] = mapped_column(String(255), default=None)
     response_reference: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProviderWorkingHours(Base):
+    __tablename__ = "provider_working_hours"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), index=True)
+    weekday: Mapped[int] = mapped_column(Integer)
+    opening_time: Mapped[str] = mapped_column(String(20))
+    closing_time: Mapped[str] = mapped_column(String(20))
+
+
+class ProviderService(Base):
+    __tablename__ = "provider_services"
+    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), primary_key=True)
+    service_id: Mapped[str] = mapped_column(ForeignKey("dental_services.id"), primary_key=True)
