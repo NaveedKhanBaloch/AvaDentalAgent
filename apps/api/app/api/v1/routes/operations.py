@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
 from app.db.session import get_db
-from app.models.models import CallLog, FollowUp
+from app.models.models import CallLog, FollowUp, Patient
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 
@@ -16,6 +16,11 @@ def list_call_logs(db: Session = Depends(get_db)) -> dict[str, list[dict]]:
         "items": [{
             "id": call.id,
             "caller_number": call.caller_number,
+            "external_call_id": call.external_call_id,
+            "patient_id": call.patient_id,
+            "appointment_id": call.appointment_id,
+            "escalation_status": call.escalation_status,
+            "processed_at": call.processed_at.isoformat() if call.processed_at else None,
             "direction": call.direction,
             "status": call.status,
             "outcome": call.outcome,
@@ -71,8 +76,10 @@ def list_follow_ups(db: Session = Depends(get_db)) -> dict[str, list[dict]]:
 def create_follow_up(payload: dict, db: Session = Depends(get_db)) -> dict:
     _, clinic = get_default_tenant_and_clinic(db)
     patient_id = payload.get("patient_id")
-    if not patient_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="patient_id is required")
+    if patient_id and not db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == clinic.id).first():
+        raise HTTPException(404, "Patient not found")
+    if not patient_id and not payload.get("contact_phone"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="patient_id or contact_phone is required")
 
     follow_up = FollowUp(
         tenant_id=clinic.tenant_id,
