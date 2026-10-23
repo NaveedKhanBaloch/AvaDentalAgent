@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.models.models import Appointment, Clinic, ClinicBusinessHours, DentalService, Membership, Patient, Provider, Tenant, User
+from app.models.models import Appointment, CallLog, Clinic, ClinicBusinessHours, DentalService, FollowUp, InsuranceProfile, Membership, Patient, Provider, ScheduleException, Tenant, User
 
 settings = get_settings()
 
@@ -101,6 +101,98 @@ def seed_demo_data() -> None:
                     source="dashboard",
                     notes="Demo appointment",
                 ))
+
+        if db.query(CallLog).filter(CallLog.clinic_id == clinic.id).count() == 0:
+            patient = db.query(Patient).filter(Patient.clinic_id == clinic.id).first()
+            now = datetime.now()
+            db.add_all([
+                CallLog(
+                    tenant_id=tenant.id,
+                    clinic_id=clinic.id,
+                    external_call_id="retell-call-1001",
+                    caller_number="(617) 555-0109",
+                    direction="inbound",
+                    start_time=now - timedelta(hours=2),
+                    end_time=now - timedelta(hours=1, minutes=50),
+                    duration=420,
+                    status="completed",
+                    outcome="booked",
+                    transcript_reference="demo-call-1001",
+                    summary="Patient requested a hygiene appointment and was booked for Thursday morning.",
+                ),
+                CallLog(
+                    tenant_id=tenant.id,
+                    clinic_id=clinic.id,
+                    external_call_id="retell-call-1002",
+                    caller_number="(617) 555-0114",
+                    direction="inbound",
+                    start_time=now - timedelta(days=1, hours=3),
+                    end_time=now - timedelta(days=1, hours=2, minutes=42),
+                    duration=300,
+                    status="missed",
+                    outcome="missed",
+                    transcript_reference="demo-call-1002",
+                    summary="Caller missed the callback and left a voicemail requesting a whitening consult.",
+                ),
+            ])
+
+        if db.query(FollowUp).filter(FollowUp.clinic_id == clinic.id).count() == 0:
+            patient = db.query(Patient).filter(Patient.clinic_id == clinic.id).first()
+            db.add_all([
+                FollowUp(
+                    tenant_id=tenant.id,
+                    clinic_id=clinic.id,
+                    patient_id=patient.id,
+                    contact_name=patient.first_name + " " + patient.last_name,
+                    contact_phone=patient.phone,
+                    reason="Confirm insurance and treatment plan before whitening consult.",
+                    priority="high",
+                    status="pending",
+                ),
+                FollowUp(
+                    tenant_id=tenant.id,
+                    clinic_id=clinic.id,
+                    patient_id=patient.id,
+                    contact_name="Front Desk",
+                    contact_phone="(617) 555-0100",
+                    reason="Share rescheduling options with recent missed call inquiry.",
+                    priority="normal",
+                    status="in_progress",
+                ),
+            ])
+
+        if db.query(ScheduleException).filter(ScheduleException.clinic_id == clinic.id).count() == 0:
+            provider = db.query(Provider).filter(Provider.clinic_id == clinic.id).first()
+            if provider:
+                db.add(
+                    ScheduleException(
+                        clinic_id=clinic.id,
+                        provider_id=provider.id,
+                        start_time=datetime.now() + timedelta(days=2, hours=13),
+                        end_time=datetime.now() + timedelta(days=2, hours=15),
+                        reason="Continuing education",
+                        exception_type="time_off",
+                    )
+                )
+
+        if db.query(InsuranceProfile).filter(InsuranceProfile.clinic_id == clinic.id).count() == 0:
+            patient = db.query(Patient).filter(Patient.clinic_id == clinic.id).first()
+            if patient:
+                db.add(
+                    InsuranceProfile(
+                        tenant_id=tenant.id,
+                        clinic_id=clinic.id,
+                        patient_id=patient.id,
+                        carrier_name="BlueCross BlueShield",
+                        policy_number="ABC-12345",
+                        group_number="GRP-77",
+                        member_name=f"{patient.first_name} {patient.last_name}",
+                        subscriber_dob="1990-04-15",
+                        relationship_to_patient="self",
+                        status="pending",
+                        notes="Primary insurance verification pending.",
+                    )
+                )
 
         db.commit()
     finally:

@@ -46,6 +46,20 @@ def get_current_user(token: str = Depends(security), db: Session = Depends(get_d
     return user
 
 
+def get_optional_current_user(token: str | None = Depends(OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)), db: Session = Depends(get_db)) -> User | None:
+    if not token:
+        return None
+    try:
+        user_id = decode_access_token(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials") from exc
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
+
+
 @router.get("/me", response_model=UserProfile)
 def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserProfile:
     membership = db.query(Membership).filter(Membership.user_id == current_user.id).order_by(Membership.id.asc()).first()

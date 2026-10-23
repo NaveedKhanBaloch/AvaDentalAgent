@@ -1,0 +1,90 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.api.v1.routes.patients import get_default_tenant_and_clinic
+from app.db.session import get_db
+from app.models.models import CallLog, FollowUp
+
+router = APIRouter(prefix="/operations", tags=["operations"])
+
+
+@router.get("/calls")
+def list_call_logs(db: Session = Depends(get_db)) -> dict[str, list[dict]]:
+    _, clinic = get_default_tenant_and_clinic(db)
+    calls = db.query(CallLog).filter(CallLog.clinic_id == clinic.id).order_by(CallLog.created_at.desc()).limit(10).all()
+    return {
+        "items": [{
+            "id": call.id,
+            "caller_number": call.caller_number,
+            "direction": call.direction,
+            "status": call.status,
+            "outcome": call.outcome,
+            "duration": call.duration,
+            "summary": call.summary,
+            "start_time": call.start_time.isoformat() if call.start_time else None,
+            "created_at": call.created_at.isoformat(),
+        } for call in calls]
+    }
+
+
+@router.post("/calls", status_code=status.HTTP_201_CREATED)
+def create_call_log(payload: dict, db: Session = Depends(get_db)) -> dict:
+    _, clinic = get_default_tenant_and_clinic(db)
+    call = CallLog(
+        tenant_id=clinic.tenant_id,
+        clinic_id=clinic.id,
+        external_call_id=payload.get("external_call_id"),
+        caller_number=payload.get("caller_number"),
+        direction=payload.get("direction", "inbound"),
+        start_time=payload.get("start_time"),
+        end_time=payload.get("end_time"),
+        duration=payload.get("duration"),
+        status=payload.get("status", "completed"),
+        outcome=payload.get("outcome"),
+        transcript_reference=payload.get("transcript_reference"),
+        summary=payload.get("summary"),
+    )
+    db.add(call)
+    db.commit()
+    db.refresh(call)
+    return {"id": call.id, "status": call.status}
+
+
+@router.get("/follow-ups")
+def list_follow_ups(db: Session = Depends(get_db)) -> dict[str, list[dict]]:
+    _, clinic = get_default_tenant_and_clinic(db)
+    follow_ups = db.query(FollowUp).filter(FollowUp.clinic_id == clinic.id).order_by(FollowUp.created_at.desc()).limit(10).all()
+    return {
+        "items": [{
+            "id": item.id,
+            "contact_name": item.contact_name,
+            "contact_phone": item.contact_phone,
+            "reason": item.reason,
+            "priority": item.priority,
+            "status": item.status,
+            "created_at": item.created_at.isoformat(),
+        } for item in follow_ups]
+    }
+
+
+@router.post("/follow-ups", status_code=status.HTTP_201_CREATED)
+def create_follow_up(payload: dict, db: Session = Depends(get_db)) -> dict:
+    _, clinic = get_default_tenant_and_clinic(db)
+    patient_id = payload.get("patient_id")
+    if not patient_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="patient_id is required")
+
+    follow_up = FollowUp(
+        tenant_id=clinic.tenant_id,
+        clinic_id=clinic.id,
+        patient_id=patient_id,
+        contact_name=payload.get("contact_name"),
+        contact_phone=payload.get("contact_phone"),
+        reason=payload.get("reason"),
+        priority=payload.get("priority", "normal"),
+        status=payload.get("status", "pending"),
+    )
+    db.add(follow_up)
+    db.commit()
+    db.refresh(follow_up)
+    return {"id": follow_up.id, "status": follow_up.status}

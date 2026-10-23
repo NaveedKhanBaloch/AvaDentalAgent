@@ -23,6 +23,11 @@ class AppointmentUpdate(BaseModel):
     notes: str | None = None
 
 
+class AppointmentStatusUpdate(BaseModel):
+    status: str
+    notes: str | None = None
+
+
 class AvailabilityRequest(BaseModel):
     clinic_id: str | None = None
     provider_id: str | None = None

@@ -6,10 +6,14 @@ app/api/__init__.py
 app/api/v1/__init__.py
 app/api/v1/routes/__init__.py
 app/api/v1/routes/auth.py
+app/api/v1/routes/catalog.py
 app/api/v1/routes/dashboard.py
 app/api/v1/routes/health.py
+app/api/v1/routes/operations.py
+app/api/v1/routes/patients.py
 app/api/v1/routes/retell.py
 app/api/v1/routes/scheduler.py
+app/api/v1/routes/staff.py
 app/api/v1/routes/system.py
 app/core/config.py
 app/core/security.py
@@ -25,4 +29,5 @@ dentalvoice_api.egg-info/SOURCES.txt
 dentalvoice_api.egg-info/dependency_links.txt
 dentalvoice_api.egg-info/requires.txt
 dentalvoice_api.egg-info/top_level.txt
+tests/test_demo_flow.py
 tests/test_health.py

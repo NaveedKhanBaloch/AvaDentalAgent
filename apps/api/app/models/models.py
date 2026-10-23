@@ -124,6 +124,25 @@ class Appointment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class InsuranceProfile(Base):
+    __tablename__ = "insurance_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
+    clinic_id: Mapped[str] = mapped_column(String(36), ForeignKey("clinics.id"), nullable=False)
+    patient_id: Mapped[str] = mapped_column(String(36), ForeignKey("patients.id"), nullable=False)
+    carrier_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    policy_number: Mapped[str | None] = mapped_column(String(120), default=None)
+    group_number: Mapped[str | None] = mapped_column(String(120), default=None)
+    member_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    subscriber_dob: Mapped[str | None] = mapped_column(String(30), default=None)
+    relationship_to_patient: Mapped[str | None] = mapped_column(String(80), default=None)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    notes: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class ClinicBusinessHours(Base):
     __tablename__ = "clinic_business_hours"
 
