@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     strict_auth_mode: bool = False
     retell_api_key: str = "dev-retell-key"
     retell_webhook_secret: str = "dev-retell-webhook-secret"
+    retell_function_rate_limit: int = Field(default=120, ge=1)
     retell_agent_id: str = "agent_demo_001"
 
     model_config = SettingsConfigDict(
