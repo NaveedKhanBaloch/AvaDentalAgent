@@ -1,13 +1,45 @@
+import hashlib
+import hmac
+import json
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
+from app.core.audit import write_audit_event
+from app.core.config import get_settings
 from app.db.session import get_db
-from app.models.models import Appointment, Clinic, DentalService, Patient, Provider
+from app.models.models import Appointment, Clinic, DentalService, Patient, Provider, WebhookEvent
 
 router = APIRouter(prefix="/integrations/retell", tags=["retell"])
+settings = get_settings()
+
+
+def _require_retell_api_access(request: Request) -> None:
+    if settings.app_env != "production":
+        return
+
+    api_key = request.headers.get("x-retell-api-key") or request.headers.get("authorization", "").replace("Bearer ", "").strip()
+    if not api_key or api_key != settings.retell_api_key:
+        raise ValueError("Invalid Retell API key.")
+
+
+def _require_retell_webhook_signature(request: Request, payload: dict) -> None:
+    if settings.app_env != "production":
+        return
+
+    signature = request.headers.get("x-retell-signature")
+    if signature is None:
+        raise ValueError("Retell webhook signature is required.")
+
+    expected = hmac.new(
+        settings.retell_webhook_secret.encode(),
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise ValueError("Retell webhook signature mismatch.")
 
 
 def _normalize_phone(value: str | None) -> str | None:
@@ -46,7 +78,11 @@ def _get_default_provider_and_service(db: Session, clinic: Clinic) -> tuple[Prov
 
 @router.post("/functions/check_availability")
 @router.post("/functions/check-availability")
-def retell_check_availability(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_check_availability(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     tenant, clinic = get_default_tenant_and_clinic(db)
     provider_id = payload.get("provider_id")
@@ -90,7 +126,11 @@ def retell_check_availability(payload: dict | None = None, db: Session = Depends
 
 @router.post("/functions/book_appointment")
 @router.post("/functions/create-appointment")
-def retell_create_appointment(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_create_appointment(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     tenant, clinic = get_default_tenant_and_clinic(db)
     patient_id = payload.get("patient_id")
@@ -152,6 +192,16 @@ def retell_create_appointment(payload: dict | None = None, db: Session = Depends
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    write_audit_event(
+        db,
+        tenant_id=tenant.id,
+        clinic_id=clinic.id,
+        action="retell.appointment.create",
+        entity_type="appointment",
+        entity_id=appointment.id,
+        actor_type="integration",
+        metadata={"source": "retell"},
+    )
     return {"success": True, "status": appointment.status, "appointment_id": appointment.id, "message": "Appointment created."}
 
 
@@ -173,7 +223,11 @@ def retell_verify_patient(payload: dict | None = None, db: Session = Depends(get
 
 @router.post("/functions/lookup_patient")
 @router.post("/functions/get-patient")
-def retell_lookup_patient(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_lookup_patient(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     _, clinic = get_default_tenant_and_clinic(db)
     phone = _normalize_phone(payload.get("phone"))
@@ -196,7 +250,11 @@ def retell_lookup_patient(payload: dict | None = None, db: Session = Depends(get
 
 @router.post("/functions/get-appointment")
 @router.post("/functions/get_appointment")
-def retell_get_appointment(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_get_appointment(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     _, clinic = get_default_tenant_and_clinic(db)
     appointment_id = payload.get("appointment_id")
@@ -208,7 +266,11 @@ def retell_get_appointment(payload: dict | None = None, db: Session = Depends(ge
 
 @router.post("/functions/reschedule_appointment")
 @router.post("/functions/reschedule-appointment")
-def retell_reschedule_appointment(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_reschedule_appointment(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     _, clinic = get_default_tenant_and_clinic(db)
     appointment_id = payload.get("appointment_id")
@@ -228,7 +290,11 @@ def retell_reschedule_appointment(payload: dict | None = None, db: Session = Dep
 
 @router.post("/functions/cancel_appointment")
 @router.post("/functions/cancel-appointment")
-def retell_cancel_appointment(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_cancel_appointment(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     _, clinic = get_default_tenant_and_clinic(db)
     appointment_id = payload.get("appointment_id")
@@ -247,7 +313,11 @@ def retell_create_followup() -> dict:
 
 @router.post("/functions/get_treatment_information")
 @router.post("/functions/get-treatment-information")
-def retell_get_treatment_information(payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+def retell_get_treatment_information(request: Request, payload: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     payload = payload or {}
     _, clinic = get_default_tenant_and_clinic(db)
     service_id = payload.get("service_id")
@@ -263,7 +333,11 @@ def retell_get_treatment_information(payload: dict | None = None, db: Session = 
 
 @router.post("/functions/get_clinic_information")
 @router.post("/functions/get-clinic-information")
-def retell_get_clinic_information(db: Session = Depends(get_db)) -> dict:
+def retell_get_clinic_information(request: Request, db: Session = Depends(get_db)) -> dict:
+    try:
+        _require_retell_api_access(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     _, clinic = get_default_tenant_and_clinic(db)
     return {
         "success": True,
@@ -283,9 +357,21 @@ def retell_get_clinic_information(db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/webhooks")
-def retell_webhook(payload: dict, db: Session = Depends(get_db)) -> dict:
+def retell_webhook(request: Request, payload: dict, db: Session = Depends(get_db)) -> dict:
     if not payload:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Retell webhook payload is required.")
+
+    try:
+        _require_retell_api_access(request)
+        _require_retell_webhook_signature(request, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+    external_event_id = str(payload.get("id") or payload.get("event_id") or payload.get("call_id") or "").strip()
+    if external_event_id:
+        existing = db.query(WebhookEvent).filter(WebhookEvent.provider == "retell", WebhookEvent.external_event_id == external_event_id).first()
+        if existing:
+            return {"status": "duplicate", "message": "Retell webhook already processed."}
 
     patient_payload = payload.get("patient") or {}
     tenant, clinic = get_default_tenant_and_clinic(db)
@@ -366,4 +452,28 @@ def retell_webhook(payload: dict, db: Session = Depends(get_db)) -> dict:
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+
+    if external_event_id:
+        db.add(
+            WebhookEvent(
+                tenant_id=tenant.id,
+                provider="retell",
+                external_event_id=external_event_id,
+                payload_reference=json.dumps(payload, default=str),
+                processing_status="processed",
+                attempts=1,
+            )
+        )
+        db.commit()
+
+    write_audit_event(
+        db,
+        tenant_id=tenant.id,
+        clinic_id=clinic.id,
+        action="retell.webhook.booking",
+        entity_type="appointment",
+        entity_id=appointment.id,
+        actor_type="integration",
+        metadata={"source": "retell", "webhook_event_id": external_event_id},
+    )
     return {"status": "accepted", "appointment_id": appointment.id, "message": "Retell booking captured into the clinic schedule."}

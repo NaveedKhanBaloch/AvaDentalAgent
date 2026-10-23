@@ -3,8 +3,10 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.core.audit import write_audit_event
+from app.core.authorization import get_user_default_clinic
 from app.db.session import get_db
-from app.models.models import Clinic, InsuranceProfile, Patient, Tenant
+from app.models.models import Clinic, InsuranceProfile, Patient, Tenant, User
 from app.schemas.patient import PatientCreate, PatientUpdate
 
 router = APIRouter(prefix="/patients", tags=["patients"])
@@ -21,31 +23,8 @@ class InsuranceCreate(BaseModel):
     notes: str | None = None
 
 
-def get_default_tenant_and_clinic(db: Session) -> tuple[Tenant, Clinic]:
-    tenant = db.query(Tenant).filter(Tenant.slug == "harbor-dental-demo").first()
-    if tenant is None:
-        tenant = Tenant(name="Harbor Dental Group", slug="harbor-dental-demo")
-        db.add(tenant)
-        db.flush()
-
-    clinic = db.query(Clinic).filter(Clinic.tenant_id == tenant.id, Clinic.name == "Harbor Dental Demo").first()
-    if clinic is None:
-        clinic = Clinic(
-            tenant_id=tenant.id,
-            name="Harbor Dental Demo",
-            address="125 Shoreline Ave",
-            city="Boston",
-            state="MA",
-            country="US",
-            timezone="America/New_York",
-            phone="(617) 555-0100",
-            email="frontdesk@harbordentaldemo.local",
-            currency="USD",
-        )
-        db.add(clinic)
-        db.flush()
-
-    return tenant, clinic
+def get_default_tenant_and_clinic(db: Session, user: User | None = None) -> tuple[Tenant, Clinic]:
+    return get_user_default_clinic(db, user)
 
 
 @router.get("")
@@ -93,6 +72,15 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> dic
     db.add(patient)
     db.commit()
     db.refresh(patient)
+    write_audit_event(
+        db,
+        tenant_id=tenant.id,
+        clinic_id=clinic.id,
+        action="patient.create",
+        entity_type="patient",
+        entity_id=patient.id,
+        actor_type="system",
+    )
     return {
         "id": patient.id,
         "tenant_id": patient.tenant_id,
@@ -136,6 +124,16 @@ def update_patient(patient_id: str, payload: PatientUpdate, db: Session = Depend
 
     db.commit()
     db.refresh(patient)
+    write_audit_event(
+        db,
+        tenant_id=patient.tenant_id,
+        clinic_id=patient.clinic_id,
+        action="patient.update",
+        entity_type="patient",
+        entity_id=patient.id,
+        actor_type="system",
+        metadata={"changed_fields": sorted(updates.keys())},
+    )
     return {
         "id": patient.id,
         "first_name": patient.first_name,
@@ -155,6 +153,16 @@ def delete_patient(patient_id: str, db: Session = Depends(get_db)) -> dict:
 
     db.delete(patient)
     db.commit()
+    write_audit_event(
+        db,
+        tenant_id=patient.tenant_id,
+        clinic_id=patient.clinic_id,
+        action="patient.delete",
+        entity_type="patient",
+        entity_id=patient.id,
+        actor_type="system",
+        metadata={"soft_delete": True},
+    )
     return {"id": patient_id, "deleted": True}
 
 

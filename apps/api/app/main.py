@@ -38,8 +38,10 @@ app.add_middleware(
 @app.on_event("startup")
 def startup() -> None:
     try:
-        Base.metadata.create_all(bind=engine)
-        seed_demo_data()
+        if settings.app_env != "production":
+            Base.metadata.create_all(bind=engine)
+            if settings.demo_seed_enabled:
+                seed_demo_data()
     except Exception:  # pragma: no cover - defensive startup guard
         pass
 

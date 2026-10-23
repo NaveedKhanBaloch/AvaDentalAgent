@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     demo_admin_email: str = "admin@harbordentaldemo.local"
     demo_admin_password: str = "AdminPass123!"
+    demo_seed_enabled: bool = True
+    strict_auth_mode: bool = False
     retell_api_key: str = "dev-retell-key"
     retell_webhook_secret: str = "dev-retell-webhook-secret"
     retell_agent_id: str = "agent_demo_001"

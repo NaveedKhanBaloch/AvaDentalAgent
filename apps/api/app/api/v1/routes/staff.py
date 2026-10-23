@@ -1,35 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.v1.routes.auth import get_optional_current_user
 from app.api.v1.routes.patients import get_default_tenant_and_clinic
+from app.core.authorization import ROLE_PERMISSIONS, require_permission as central_require_permission
 from app.db.session import get_db
 from app.models.models import Membership, User
 
 router = APIRouter(tags=["staff"])
 
-PERMISSIONS_BY_ROLE = {
-    "Clinic Owner": ["manage_staff", "manage_schedule", "view_financials", "update_appointments", "create_appointments"],
-    "clinic_owner": ["manage_staff", "manage_schedule", "view_financials", "update_appointments", "create_appointments"],
-    "receptionist": ["view_patients", "create_appointments", "update_appointments"],
-    "dentist": ["view_schedule", "update_appointments"],
-    "scheduler": ["manage_schedule", "update_appointments", "create_appointments"],
-}
+PERMISSIONS_BY_ROLE = ROLE_PERMISSIONS
 
 
 def require_permission(permission: str):
-    def dependency(current_user: User | None = Depends(get_optional_current_user), db: Session = Depends(get_db)) -> User | None:
-        if current_user is None:
-            return None
-
-        membership = db.query(Membership).filter(Membership.user_id == current_user.id).order_by(Membership.id.asc()).first()
-        role = membership.role if membership else "clinic_owner"
-        allowed = permission in PERMISSIONS_BY_ROLE.get(role, [])
-        if not allowed:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission denied: requires {permission} permission.")
-        return current_user
-
-    return dependency
+    return central_require_permission(permission)
 
 
 @router.get("/staff")
