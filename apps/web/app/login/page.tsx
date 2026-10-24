@@ -9,7 +9,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_B
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('admin@harbordentaldemo.local');
-  const [password, setPassword] = useState('AdminPass123!');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 

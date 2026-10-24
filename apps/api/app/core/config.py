@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(default="change-me-in-dev")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
-    database_url: str = "postgresql+psycopg://dentalvoice:supersecret@postgres:5432/dentalvoice"
-    redis_url: str = "redis://redis:6379/0"
+    database_url: str = "postgresql+psycopg://dentalvoice:supersecret@127.0.0.1:55432/dentalvoice"
+    redis_url: str = "redis://127.0.0.1:56379/0"
     allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     demo_admin_email: str = "admin@harbordentaldemo.local"
     demo_admin_password: str = "AdminPass123!"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     retell_api_key: str = "dev-retell-key"
     retell_webhook_secret: str = "dev-retell-webhook-secret"
     retell_function_rate_limit: int = Field(default=120, ge=1)
+    sandbox_reminders_enabled: bool = False
     retell_agent_id: str = "agent_demo_001"
 
     model_config = SettingsConfigDict(

@@ -44,3 +44,7 @@ This repository contains the foundation for a working MVP, including project str
 
 
 Phase 1: see [implementation report](docs/architecture/phase1-implementation-report.md), [Retell configuration](docs/api/RETELL_FUNCTIONS.md), [test commands](docs/testing/PHASE1_TESTING.md), and [Coolify preparation](docs/deployment/COOLIFY_HOSTINGER.md). Run Alembic migrations before starting the API; it no longer creates schema on startup or silently switches databases. For an isolated synthetic stack use `docker compose -f compose.test.yaml up --build -d --wait`. Do not use the test Compose file in production.
+
+## Native development database hostname
+
+For Next.js on localhost:3000 and uvicorn on localhost:8000, start dedicated dependencies with `docker compose -f compose.local.yaml up -d --wait`. Native API defaults use PostgreSQL at 127.0.0.1:55432 and Redis at 127.0.0.1:56379; Docker service hostnames `postgres` and `redis` only resolve inside their Docker network. See [native login/setup instructions](docs/phase-2/deployment-notes.md#native-development-login-port-3000). The native demo password is `AdminPass123!`; the isolated test app on port 33001 uses a separate database and password.

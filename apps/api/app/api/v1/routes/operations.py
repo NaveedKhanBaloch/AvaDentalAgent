@@ -55,43 +55,8 @@ def create_call_log(payload: dict, db: Session = Depends(get_db)) -> dict:
     return {"id": call.id, "status": call.status}
 
 
-@router.get("/follow-ups")
-def list_follow_ups(db: Session = Depends(get_db)) -> dict[str, list[dict]]:
+@router.get("/capabilities")
+def operation_capabilities(db: Session = Depends(get_db)):
+    from app.core.authorization import capabilities
     _, clinic = get_default_tenant_and_clinic(db)
-    follow_ups = db.query(FollowUp).filter(FollowUp.clinic_id == clinic.id).order_by(FollowUp.created_at.desc()).limit(10).all()
-    return {
-        "items": [{
-            "id": item.id,
-            "contact_name": item.contact_name,
-            "contact_phone": item.contact_phone,
-            "reason": item.reason,
-            "priority": item.priority,
-            "status": item.status,
-            "created_at": item.created_at.isoformat(),
-        } for item in follow_ups]
-    }
-
-
-@router.post("/follow-ups", status_code=status.HTTP_201_CREATED)
-def create_follow_up(payload: dict, db: Session = Depends(get_db)) -> dict:
-    _, clinic = get_default_tenant_and_clinic(db)
-    patient_id = payload.get("patient_id")
-    if patient_id and not db.query(Patient).filter(Patient.id == patient_id, Patient.clinic_id == clinic.id).first():
-        raise HTTPException(404, "Patient not found")
-    if not patient_id and not payload.get("contact_phone"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="patient_id or contact_phone is required")
-
-    follow_up = FollowUp(
-        tenant_id=clinic.tenant_id,
-        clinic_id=clinic.id,
-        patient_id=patient_id,
-        contact_name=payload.get("contact_name"),
-        contact_phone=payload.get("contact_phone"),
-        reason=payload.get("reason"),
-        priority=payload.get("priority", "normal"),
-        status=payload.get("status", "pending"),
-    )
-    db.add(follow_up)
-    db.commit()
-    db.refresh(follow_up)
-    return {"id": follow_up.id, "status": follow_up.status}
+    return {"permissions": capabilities(db), "timezone": clinic.timezone, "currency": clinic.currency}

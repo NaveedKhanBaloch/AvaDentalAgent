@@ -14,6 +14,7 @@ def write_audit_event(
     tenant_id: str | None,
     clinic_id: str | None,
     action: str,
+    patient_id: str | None = None,
     entity_type: str,
     entity_id: str | None = None,
     actor_type: str = "system",
@@ -25,6 +26,8 @@ def write_audit_event(
 
     entry = AuditLog(
         tenant_id=tenant_id,
+        clinic_id=clinic_id,
+        patient_id=patient_id,
         actor_type=actor_type,
         actor_id=actor_id,
         action=action,

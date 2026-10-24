@@ -1,4 +1,8 @@
 "use client";
+import Patients from '../../features/phase2/Patients';
+import Tasks from '../../features/phase2/Tasks';
+import Estimates from '../../features/phase2/Estimates';
+import Metrics from '../../features/phase2/Metrics';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, CalendarCheck2, LogOut, MessageSquareText, MoonStar, SunMedium, Users } from 'lucide-react';
@@ -181,8 +185,11 @@ export default function DashboardPage() {
     status: 'pending',
     notes: '',
   });
+  const [insurancePatientId, setInsurancePatientId] = useState('');
+  const [bookingPatientSearch, setBookingPatientSearch] = useState('');
   const [insuranceMessage, setInsuranceMessage] = useState('');
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'patients' | 'appointments' | 'providers' | 'services' | 'insurance' | 'calls' | 'staff' | 'settings'>('dashboard');
+  const [phase2Permissions, setPhase2Permissions] = useState<string[]>([]);
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'patients' | 'appointments' | 'providers' | 'services' | 'insurance' | 'calls' | 'staff' | 'settings' | 'follow-ups' | 'recalls' | 'estimates'>('dashboard');
   const [patientSearch, setPatientSearch] = useState('');
   const [appointmentSearch, setAppointmentSearch] = useState('');
   const [providerSearch, setProviderSearch] = useState('');
@@ -267,6 +274,8 @@ export default function DashboardPage() {
   }, [router]);
 
   useEffect(() => {
+    const section=new URLSearchParams(window.location.search).get('section');if(section && ['patients','follow-ups','recalls','estimates','appointments','calls'].includes(section))setActiveSection(section as 'patients'|'follow-ups'|'recalls'|'estimates'|'appointments'|'calls');
+    fetch(`${API_URL}/api/v1/operations/capabilities`,{headers:getAuthHeaders()}).then(r=>r.json()).then(d=>setPhase2Permissions(d.permissions??[])).catch(()=>{});
     void loadDashboard().catch(() => setLoadError('Unable to connect to the clinic system. Please refresh to retry.'));
   }, [loadDashboard]);
 
@@ -503,17 +512,17 @@ export default function DashboardPage() {
 
   async function handleInsuranceSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!patients[0]?.id) {
-      setInsuranceMessage('Add a patient before submitting insurance details.');
+    if (!insurancePatientId) {
+      setInsuranceMessage('Select a patient before submitting insurance details.');
       return;
     }
 
-    const response = await fetch(`${API_URL}/api/v1/patients/${patients[0].id}/insurance`, {
+    const response = await fetch(`${API_URL}/api/v1/patients/${insurancePatientId}/insurance`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({
         ...insuranceForm,
-        member_name: insuranceForm.member_name || `${patients[0].first_name} ${patients[0].last_name}`,
+        member_name: insuranceForm.member_name || `${patients.find(p=>p.id===insurancePatientId)?.first_name ?? ''} ${patients.find(p=>p.id===insurancePatientId)?.last_name ?? ''}`,
       }),
     });
 
@@ -558,6 +567,9 @@ export default function DashboardPage() {
     { id: 'appointments', label: 'Appointments', icon: CalendarCheck2 },
     { id: 'providers', label: 'Providers', icon: Users },
     { id: 'services', label: 'Services', icon: Activity },
+    { id: 'estimates', label: 'Estimates', icon: CalendarCheck2 },
+    { id: 'follow-ups', label: 'Follow-ups', icon: MessageSquareText },
+    { id: 'recalls', label: 'Recalls', icon: CalendarCheck2 },
     { id: 'insurance', label: 'Insurance', icon: MessageSquareText },
     { id: 'calls', label: 'Calls', icon: MessageSquareText },
     { id: 'staff', label: 'Staff', icon: Users },
@@ -567,15 +579,15 @@ export default function DashboardPage() {
   return (
     <div className={`dashboard-shell min-h-screen p-4 md:p-6 ${isDark ? 'dark bg-slate-950 text-slate-100' : 'bg-[#e8ebf0] text-slate-900'}`}>
       <div className={`mx-auto max-w-[1600px] overflow-hidden rounded-[28px] border shadow-[0_20px_60px_rgba(15,23,42,0.08)] ${isDark ? 'border-slate-800 bg-slate-950' : 'border-[#dfe5ee] bg-[#f4f6fa]'}`}>
-        <div className={`flex min-h-[calc(100vh-48px)] ${isDark ? 'bg-slate-950' : 'bg-[#f4f6fa]'}`}>
-          <aside className={`w-[268px] shrink-0 border-r p-4 ${isDark ? 'border-slate-800 bg-[#111827] text-slate-100' : 'border-[#e7ebf1] bg-[#f3f5f8] text-slate-900'}`}>
-            <div className="mb-6 flex items-center gap-3 px-2 py-2">
+        <div className={`flex flex-col md:flex-row min-h-[calc(100vh-48px)] ${isDark ? 'bg-slate-950' : 'bg-[#f4f6fa]'}`}>
+          <aside className={`w-full md:w-[268px] shrink-0 border-b md:border-b-0 md:border-r p-4 ${isDark ? 'border-slate-800 bg-[#111827] text-slate-100' : 'border-[#e7ebf1] bg-[#f3f5f8] text-slate-900'}`}>
+            <div className="mb-2 md:mb-6 flex items-center gap-3 px-2 py-2">
               <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${isDark ? 'bg-cyan-500/20 text-cyan-300' : 'bg-[#0f172a] text-white'}`}>A</div>
               <div className={`text-xl font-bold tracking-[-0.03em] ${isDark ? 'text-white' : 'text-slate-900'}`}>Ava Dental</div>
             </div>
 
-            <nav className="space-y-1.5">
-              {navItems.map(({ id, label, icon: Icon }) => (
+            <nav aria-label="Dashboard sections" className="grid grid-cols-2 gap-1.5 md:block md:space-y-1.5">
+              {navItems.filter(item=>item.id!=='estimates'||phase2Permissions.includes('estimate_read')).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   type="button"
@@ -592,7 +604,7 @@ export default function DashboardPage() {
               ))}
             </nav>
 
-            <div className="mt-8 rounded-[22px] bg-[#0b7fdc] p-4 text-white shadow-[0_12px_25px_rgba(37,99,235,0.28)]">
+            <div className="hidden md:block mt-8 rounded-[22px] bg-[#0b7fdc] p-4 text-white shadow-[0_12px_25px_rgba(37,99,235,0.28)]">
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-blue-100">Upgrade</div>
               <div className="mt-2 text-xl font-semibold">Premium</div>
               <button
@@ -603,9 +615,10 @@ export default function DashboardPage() {
                 Log out
               </button>
             </div>
+            <button className="mt-3 md:hidden rounded-xl border px-3 py-2 text-sm" onClick={handleLogout}>Log out</button>
           </aside>
 
-          <main className="flex-1 bg-[#f4f6fa] px-5 py-4">
+          <main className="min-w-0 flex-1 bg-[#f4f6fa] px-3 md:px-5 py-4">
             <header className={`mb-5 flex items-center justify-between gap-4 rounded-[18px] border px-4 py-3 shadow-[0_1px_0_rgba(15,23,42,0.02)] ${isDark ? 'border-slate-800 bg-slate-900' : 'border-[#e5e7eb] bg-[#f8fafc]'}`}>
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${isDark ? 'border-slate-700 bg-slate-800 text-slate-400' : 'border-[#e5e7eb] bg-white text-slate-400'}`}>
@@ -614,7 +627,7 @@ export default function DashboardPage() {
                     <path d="M16 16L21 21" />
                   </svg>
                 </div>
-<div className={`flex h-10 w-[360px] items-center gap-2 rounded-xl border px-3 text-sm shadow-sm ${isDark ? 'border-slate-700 bg-slate-800 text-slate-300' : 'border-[#e5e7eb] bg-white text-slate-500'}`}>
+<div className={`hidden xl:flex h-10 w-[360px] items-center gap-2 rounded-xl border px-3 text-sm shadow-sm ${isDark ? 'border-slate-700 bg-slate-800 text-slate-300' : 'border-[#e5e7eb] bg-white text-slate-500'}`}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`h-4 w-4 ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>
                     <circle cx="11" cy="11" r="6" />
                     <path d="M16 16L21 21" />
@@ -646,6 +659,7 @@ export default function DashboardPage() {
 
             {activeSection === 'dashboard' && (
             <>
+              <Metrics />
               <section className="mb-6 grid gap-4 md:grid-cols-4">
                 {metrics.map((metric) => (
                   <div key={metric.label} className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -722,65 +736,18 @@ export default function DashboardPage() {
           )}
 
           {loadError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-rose-700">{loadError}</p>}
-          {activeSection === 'patients' && (
-            <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-              <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <h2 className="mb-4 text-xl font-semibold">Add patient</h2>
-                <form className="space-y-3" onSubmit={handleCreatePatient}>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <input value={form.first_name} onChange={(event) => setForm({ ...form, first_name: event.target.value })} placeholder="First name" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                    <input value={form.last_name} onChange={(event) => setForm({ ...form, last_name: event.target.value })} placeholder="Last name" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="Phone" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                    <input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="Email" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                  </div>
-                  <input value={form.preferred_contact_method} onChange={(event) => setForm({ ...form, preferred_contact_method: event.target.value })} placeholder="Preferred contact method" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                  <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes" rows={3} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
-                  <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white">Save patient</button>
-                  {status ? <p className="text-sm text-slate-600">{status}</p> : null}
-                </form>
-              </div>
-
-              <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <h2 className="text-xl font-semibold">Patient directory</h2>
-                  <input value={patientSearch} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Search patient..." className="w-52 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none" />
-                </div>
-                <div className="overflow-hidden rounded-2xl border border-slate-200">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="px-4 py-3 font-medium">Name</th>
-                        <th className="px-4 py-3 font-medium">Contact</th>
-                        <th className="px-4 py-3 font-medium">Preferred</th>
-                        <th className="px-4 py-3 font-medium">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPatients.map((patient) => (
-                        <tr key={patient.id} className="border-t border-slate-200">
-                          <td className="px-4 py-3">{patient.first_name} {patient.last_name}</td>
-                          <td className="px-4 py-3">{patient.email ?? patient.phone ?? '—'}</td>
-                          <td className="px-4 py-3">{patient.preferred_contact_method ?? 'phone'}</td>
-                          <td className="px-4 py-3">
-                            <button type="button" onClick={() => handleDeletePatient(patient.id)} className="rounded-lg bg-rose-600 px-2 py-1 text-xs font-medium text-white">Delete</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
+          {activeSection === 'patients' && <Patients />}
+          {activeSection === 'estimates' && <Estimates />}
+          {activeSection === 'follow-ups' && <Tasks key="follow-ups" kind="follow-ups" />}
+          {activeSection === 'recalls' && <Tasks key="recalls" kind="recalls" />}
 
           {activeSection === 'appointments' && (
             <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
               <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <h2 className="mb-4 text-xl font-semibold">{editingAppointment ? 'Reschedule visit' : 'Schedule visit'}</h2>
                 <form className="space-y-3" onSubmit={handleCreateAppointment}>
-                  <select value={bookingForm.patient_id} onChange={(event) => setBookingForm({ ...bookingForm, patient_id: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
+                  <label>Find patient<input className="w-full rounded-xl border p-2" value={bookingPatientSearch} onChange={async e=>{const value=e.target.value;setBookingPatientSearch(value);try{const response=await fetch(`${API_URL}/api/v1/patients?search=${encodeURIComponent(value)}&status=active&page_size=100`,{headers:getAuthHeaders()});if(response.ok)setPatients((await response.json()).items);}catch{setBookingStatus('Patient search unavailable.')}}}/></label>
+                  <select aria-label="Booking patient" value={bookingForm.patient_id} onChange={(event) => setBookingForm({ ...bookingForm, patient_id: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none">
                     <option value="">Select patient</option>
                     {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.first_name} {patient.last_name}</option>)}
                   </select>
@@ -909,6 +876,7 @@ export default function DashboardPage() {
             <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
               <h2 className="mb-4 text-xl font-semibold">Insurance intake</h2>
               <form className="space-y-3" onSubmit={handleInsuranceSubmit}>
+                <label>Patient<select className="w-full rounded-xl border p-2" required value={insurancePatientId} onChange={e=>setInsurancePatientId(e.target.value)}><option value="">Select patient</option>{patients.map(p=><option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}</select></label>
                 <input value={insuranceForm.carrier_name} onChange={(event) => setInsuranceForm({ ...insuranceForm, carrier_name: event.target.value })} placeholder="Carrier name" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />
                 <div className="grid gap-3 md:grid-cols-2">
                   <input value={insuranceForm.policy_number} onChange={(event) => setInsuranceForm({ ...insuranceForm, policy_number: event.target.value })} placeholder="Policy number" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 outline-none" />

@@ -64,3 +64,7 @@ Appointments must be at least the configured service duration; longer intervals 
 The availability response retains success/status/message/slots and adds timezone plus provider IDs. Appointment listings add end_time, patient/provider/service IDs, source and timezone. Call listings add appointment association, escalation and processing time. Summary adds ai_bookings, rescheduled and unresolved_calls. No metric implies a confirmed transfer or verified patient unless that state actually exists.
 
 Retell auth, explicit confirmation, new-intake-only booking, privacy fallback and webhook behavior have intentional security changes; use the complete [Retell contract guide](RETELL_FUNCTIONS.md). Webhooks never create bookings. The old change-password route remains a stub; do not use it as an actual password-change implementation.
+
+## Phase 2 patient operations and estimates
+
+See [Phase 2 API contracts](../phase-2/api-contracts.md) for patient profiles/timelines, follow-ups, recalls, operations metrics, estimate policy/lifecycle/versioning and protected PDF endpoints. Existing paths remain; patient lists are now paginated (items wrapper retained).

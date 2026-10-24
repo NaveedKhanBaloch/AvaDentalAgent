@@ -27,7 +27,7 @@ services:
       STRICT_AUTH_MODE: "true"
       DATABASE_URL: postgresql+psycopg://test_user:synthetic-test-password@postgres:5432/dentalvoice_test
       REDIS_URL: redis://redis:6379/0
-      ALLOWED_ORIGINS: http://localhost:33001
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:33001
       DEMO_ADMIN_PASSWORD: Phase1Synthetic123!
     command: sh -c "alembic upgrade head && python -m app.seed && gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"
     depends_on:
@@ -47,3 +47,20 @@ services:
     ports: ["127.0.0.1:33001:3000"]
     depends_on:
       api: {condition: service_healthy}
+
+  worker:
+    image: avadental-e2e-api
+    environment:
+      APP_ENV: development
+      STRICT_AUTH_MODE: "true"
+      DATABASE_URL: postgresql+psycopg://test_user:synthetic-test-password@postgres:5432/dentalvoice_test
+      REDIS_URL: redis://redis:6379/0
+      SANDBOX_REMINDERS_ENABLED: "true"
+    command: python -m app.workers
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "from redis import Redis; assert Redis.from_url('redis://redis:6379/0').get('dentalvoice:worker:heartbeat')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

@@ -112,10 +112,9 @@ def process_function(db, payload, integration_id, operation, correlation):
         if not args.phone:
             return result("validation_error", "A callback phone number is required.")
         def followup():
-            follow = FollowUp(tenant_id=clinic.tenant_id, clinic_id=clinic.id, contact_name=args.first_name,
-                              contact_phone=args.phone, reason=args.reason or "Human assistance requested", status="pending")
-            db.add(follow)
-            db.flush()
+            from app.services.followups import save_operation
+            follow = save_operation(db, clinic, {"contact_name": args.first_name, "contact_phone": args.phone,
+                "reason": args.reason or "Human assistance requested"}, integration_actor=integration.id)
             log = call_record(db, clinic, call_id)
             log.outcome, log.escalation_status = "follow_up", "requested"
             return result("created", "Callback request recorded. Staff will review the request; callback timing is not guaranteed.",

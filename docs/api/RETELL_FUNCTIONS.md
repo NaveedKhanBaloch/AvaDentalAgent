@@ -99,3 +99,7 @@ Troubleshooting: 401 means wrong webhook-badged key, altered raw bytes, missing 
 - [Lifecycle events and webhook precedence](https://docs.retellai.com/features/register-webhook)
 - [Call transfer configuration](https://docs.retellai.com/build/single-multi-prompt/transfer-call)
 - [Inbound routing webhook](https://docs.retellai.com/features/inbound-call-webhook) — overview accessible; detailed second retrieval failed. No inbound routing schema was implemented or assumed.
+
+## Phase 2 callback integration
+
+`request_human_assistance` / legacy `create-followup` now reuse the shared follow-up domain service, preserving authentication, clinic binding, idempotency and the existing response. Staff see callbacks in the Phase 2 workspace; unverified callers stay unlinked to patients. No new patient/estimate disclosure tool, outbound call campaign or live Retell dashboard change was added. See [Phase 2 contracts](../phase-2/api-contracts.md).

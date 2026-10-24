@@ -33,6 +33,7 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile
     environment:
+      SANDBOX_REMINDERS_ENABLED: ${SANDBOX_REMINDERS_ENABLED:-false}
       APP_ENV: production
       DEMO_SEED_ENABLED: "false"
       STRICT_AUTH_MODE: "true"
@@ -60,6 +61,7 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile
     environment:
+      SANDBOX_REMINDERS_ENABLED: ${SANDBOX_REMINDERS_ENABLED:-false}
       APP_ENV: production
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}

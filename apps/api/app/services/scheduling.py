@@ -210,6 +210,8 @@ def ensure_no_overlap(db, clinic_id, provider_id, start_time, end_time, exclude_
 
 def save_appointment(db, clinic, patient, data, actor_type="user", actor_id=None, appointment=None):
     # Caller owns the transaction; audit and appointment commit atomically.
+    if appointment is None and patient.status != "active":
+        raise ScheduleValidationError("Archived patients must be restored before booking.")
     if patient.clinic_id != clinic.id or patient.tenant_id != clinic.tenant_id:
         raise ScheduleValidationError("Patient is unavailable for this clinic.")
     existing = appointment is not None
@@ -253,7 +255,7 @@ def save_appointment(db, clinic, patient, data, actor_type="user", actor_id=None
         appointment.notes = data["notes"]
     db.flush()
     write_audit_event(db, tenant_id=clinic.tenant_id, clinic_id=clinic.id, action=("appointment.reschedule" if moving else "appointment.update") if existing else "appointment.create",
-        entity_type="appointment", entity_id=appointment.id, actor_type=actor_type, actor_id=actor_id,
+        entity_type="appointment", entity_id=appointment.id, patient_id=patient.id, actor_type=actor_type, actor_id=actor_id,
         metadata={"clinic_id": clinic.id, "before": before, "after": {"status": target, "start_time": appointment.start_time.isoformat(),
         "end_time": appointment.end_time.isoformat(), "provider_id": appointment.provider_id}})
     return appointment

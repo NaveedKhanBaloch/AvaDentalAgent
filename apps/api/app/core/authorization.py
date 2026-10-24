@@ -108,3 +108,25 @@ async def bind_request_user(current_user: User | None = Depends(get_optional_cur
         yield
     finally:
         request_user.reset(token)
+
+
+# Phase 2 adds capabilities to existing roles; no new role is introduced.
+PHASE2_PERMISSIONS = {
+    "clinic_owner": ["patient_read", "patient_write", "patient_archive", "patient_delete", "followup_read", "followup_write", "recall_read", "recall_write", "estimate_read", "estimate_write", "estimate_approve", "estimate_admin", "operations_report"],
+    "receptionist": ["patient_read", "patient_write", "patient_archive", "followup_read", "followup_write", "recall_read", "recall_write", "operations_report"],
+    "dentist": ["patient_read", "followup_read", "recall_read"],
+    "scheduler": ["patient_read", "followup_read", "followup_write", "recall_read", "recall_write", "operations_report"],
+}
+for _role, _permissions in PHASE2_PERMISSIONS.items():
+    ROLE_PERMISSIONS[_role].extend(_permissions)
+ROLE_PERMISSIONS["Clinic Owner"].extend(PHASE2_PERMISSIONS["clinic_owner"])
+
+
+def capabilities(db):
+    user = request_user.get()
+    if user is None:
+        if get_settings().app_env != "production" and not get_settings().strict_auth_mode:
+            return ROLE_PERMISSIONS["clinic_owner"]  # Existing explicitly non-strict local demo.
+        return []
+    membership = get_user_membership(db, user.id)
+    return ROLE_PERMISSIONS.get(membership.role, []) if membership else []

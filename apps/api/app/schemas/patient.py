@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -10,6 +10,17 @@ class PatientCreate(BaseModel):
     email: EmailStr | None = None
     preferred_contact_method: str = "phone"
     notes: str | None = None
+    date_of_birth: date | None = None
+    do_not_contact: bool = False
+    email_consent: bool = False
+    sms_consent: bool = False
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def valid_birth_date(cls, value):
+        if value and value > date.today():
+            raise ValueError("Date of birth cannot be in the future")
+        return value
 
     @field_validator("phone", "email", "notes", mode="before")
     @classmethod
@@ -27,6 +38,18 @@ class PatientUpdate(BaseModel):
     email: EmailStr | None = None
     preferred_contact_method: str | None = None
     notes: str | None = None
+    date_of_birth: date | None = None
+    do_not_contact: bool | None = None
+    email_consent: bool | None = None
+    sms_consent: bool | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def valid_birth_date(cls, value):
+        if value and value > date.today():
+            raise ValueError("Date of birth cannot be in the future")
+        return value
 
     @field_validator("phone", "email", "notes", mode="before")
     @classmethod
